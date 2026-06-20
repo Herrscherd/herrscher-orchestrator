@@ -27,12 +27,20 @@ const (
 // without continuity (Context returns "", Observe no-ops).
 type Curator struct {
 	mem     contracts.Memory
-	session string // session node key
+	session string                // session node key
+	scope   contracts.MemoryScope // P1: shared project + private agent roots ({} = none)
 }
 
-// New builds the default orchestrator for session over mem (mem may be nil).
+// New builds the default orchestrator for session over mem (mem may be nil),
+// with no memory scope (the session transcript is the only continuity).
 func New(mem contracts.Memory, session string) *Curator {
-	return &Curator{mem: mem, session: "sessions/" + session}
+	return NewScoped(mem, session, contracts.MemoryScope{})
+}
+
+// NewScoped is New plus a MemoryScope (P1): Context also surfaces the shared
+// project memory and this agent's private skills via contracts.RecallScoped.
+func NewScoped(mem contracts.Memory, session string, scope contracts.MemoryScope) *Curator {
+	return &Curator{mem: mem, session: "sessions/" + session, scope: scope}
 }
 
 var _ contracts.Orchestrator = (*Curator)(nil)
@@ -44,14 +52,23 @@ func (c *Curator) Context(ctx context.Context) string {
 	if c.mem == nil {
 		return ""
 	}
-	sg, err := c.mem.Recall(ctx, c.session, 1)
-	if err != nil {
-		return ""
-	}
 	var b strings.Builder
-	writeNode(&b, sg.Root)
-	for _, n := range sg.Nodes {
-		writeNode(&b, n)
+	// P1: durable shared (project) + private (agent) memory first, so the agent
+	// recalls the game's lore/conventions and its own learned skills every turn.
+	if c.scope.Project != "" {
+		if sg, err := contracts.RecallScoped(ctx, c.mem, c.scope, 1); err == nil {
+			writeNode(&b, sg.Root)
+			for _, n := range sg.Nodes {
+				writeNode(&b, n)
+			}
+		}
+	}
+	// Then this session's rolling transcript for short-term continuity.
+	if sg, err := c.mem.Recall(ctx, c.session, 1); err == nil {
+		writeNode(&b, sg.Root)
+		for _, n := range sg.Nodes {
+			writeNode(&b, n)
+		}
 	}
 	return strings.TrimSpace(b.String())
 }
