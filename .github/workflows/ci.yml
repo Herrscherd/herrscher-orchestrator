@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      # This is a pure plugin whose only dependency is herrscher-contracts. A PR
+      # often rides on an unpublished contracts commit (a pseudo-version in
+      # go.mod), so build it against the matching contracts ref via go.work:
+      # the contracts branch with the same name when it exists, else its default.
+      - name: Check out herrscher-contracts
+        uses: actions/checkout@v4
+        with:
+          repository: Herrscherd/herrscher-contracts
+          ref: ${{ github.head_ref }}
+          path: _deps/herrscher-contracts
+          token: ${{ secrets.CONTRACTS_TOKEN || github.token }}
+        continue-on-error: true
+
+      - name: Use local contracts when present
+        run: |
+          if [ -d _deps/herrscher-contracts ]; then
+            go work init . _deps/herrscher-contracts
+          fi
+
+      - run: go vet ./...
+      - run: go test ./...

@@ -29,7 +29,7 @@ every turn:
 
 | Method | Role |
 |--------|------|
-| `Context(ctx) string` | Recalls the session node and its neighbours (depth 1) into a compact `## Title` + body block to prepend to the next prompt. Returns `""` on a first turn or any recall failure — never a turn-breaking error. |
+| `Context(ctx) string` | Surfaces **durable scoped memory first** (the shared project subgraph + this agent's private skills, via `contracts.RecallScoped`) then the session node and its neighbours (depth 1), as a compact `## Title` + body block to prepend to the next prompt. Returns `""` on a first turn or any recall failure — never a turn-breaking error. |
 | `Observe(ctx, prompt, reply) error` | Upserts the session node with the turn prepended to a **newest-first rolling transcript**, bounded to `maxTurns` (20) lines, so the next `Context` has continuity. |
 | `Consolidate(ctx) error` | The `CurationHook` seam. The default keeps the transcript bounded inline, so this is a no-op; a richer orchestrator overrides it with summarisation/pruning. |
 | `Close() error` | No-op — the composed `Memory` is owned and closed by the host. |
@@ -38,6 +38,26 @@ A **nil Memory** is valid: the orchestrator still answers, just without continui
 (`Context` returns `""`, `Observe` no-ops).
 
 The session node is keyed `sessions/<name>` with `Kind = KindSession`.
+
+### Memory scope (P1)
+
+`New(mem, session)` keeps the legacy behaviour (transcript-only continuity).
+`NewScoped(mem, session, scope)` threads a `contracts.MemoryScope` so `Context`
+also recalls the **shared project memory** (every agent of the game) and this
+agent's **private skills**. The plugin entrypoint (`register.go`) reads the
+`memory.project` / `memory.agent` config keys and keys them onto the spine
+(`projects/<name>`, `agents/<name>`); both are optional, so an unscoped host is
+unaffected.
+
+### The learning loop (`Learner`)
+
+`Learner` wraps the `Curator` with a real `Consolidate`: it runs a pluggable
+`Extractor` over the call journal + session transcript and persists what it
+returns — facts under the shared project scope, learned skills under the private
+agent scope. The `Extractor` (the *what is worth remembering* heuristics) is the
+closed part of the moat; this package ships only the open seam and plumbing.
+`Learner` is **public API for a learning host** — the default `register.go`
+entrypoint still constructs the plain `Curator`, so nothing wires it implicitly.
 
 ---
 
@@ -56,6 +76,12 @@ Transcript lines are built from attacker-controlled input (a display name, a
 message). `turnLine` collapses each field to one line and defangs the `→`
 separator to `->`, so a crafted message can't forge extra "author → reply" turns
 inside its own line. Inbound content is capped at 100 runes, replies at 200.
+
+Recalled memory is attacker-controlled too — **shared project memory is
+multi-writer** (any agent of the game can `RecordShared`) — so `writeNode`
+applies the same `→` defang to every node title/body before it reaches the
+prompt, blocking a forged turn planted in a fact from spoofing another agent's
+context.
 
 ---
 

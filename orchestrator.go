@@ -74,11 +74,16 @@ func (c *Curator) Context(ctx context.Context) string {
 }
 
 func writeNode(b *strings.Builder, n contracts.Node) {
-	if n.Title != "" {
-		fmt.Fprintf(b, "## %s\n", n.Title)
+	// Title/Body are attacker-controlled: shared project memory is multi-writer
+	// (any agent of the game can RecordShared), so a forged "author → reply" turn
+	// planted in a fact would be injected into every agent's context. Defang the
+	// "→" separator the transcript uses (see turnLine); the title is collapsed to
+	// one line so it can't break out of its "## " header.
+	if title := oneline(n.Title, maxContentChars); title != "" {
+		fmt.Fprintf(b, "## %s\n", strings.ReplaceAll(title, "→", "->"))
 	}
 	if body := strings.TrimSpace(n.Body); body != "" {
-		b.WriteString(body)
+		b.WriteString(strings.ReplaceAll(body, "→", "->"))
 		b.WriteByte('\n')
 	}
 }
