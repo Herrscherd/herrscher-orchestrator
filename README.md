@@ -56,8 +56,21 @@ unaffected.
 returns — facts under the shared project scope, learned skills under the private
 agent scope. The `Extractor` (the *what is worth remembering* heuristics) is the
 closed part of the moat; this package ships only the open seam and plumbing.
-`Learner` is **public API for a learning host** — the default `register.go`
-entrypoint still constructs the plain `Curator`, so nothing wires it implicitly.
+
+**Wiring it.** The closed curation module registers its extractor by name —
+`orchestrator.RegisterExtractor("roblox", ex)` from an `init()`, plugged in by a
+blank import (the same pattern plugins use into the host). The entrypoint then
+builds a `Learner` instead of the plain `Curator` when the host names a
+registered extractor:
+
+| Config key | Meaning |
+|------------|---------|
+| `memory.extractor` | name of a registered `Extractor`; unset or unknown → plain `Curator` (no learning). |
+| `memory.journal` | path to the call journal fed to the extractor (e.g. `<worktree>/.neublox/calls.log`). |
+| `memory.consolidate-every` | run `Consolidate` every N observed turns (`0`/unset = manual only). |
+
+With no extractor registered the entrypoint is unchanged — an unconfigured host
+keeps transcript-only continuity.
 
 ---
 

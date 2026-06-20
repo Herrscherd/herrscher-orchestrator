@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/Herrscherd/herrscher-contracts"
 )
@@ -21,6 +22,15 @@ func init() {
 			}
 			if a := cfg.Get("memory.agent"); a != "" {
 				scope.Agent = "agents/" + a
+			}
+			// Opt into the learning loop when the host names a registered
+			// extractor (the closed curation heuristics, plugged in by blank
+			// import). Without one we keep the plain Curator, so an unconfigured
+			// host is unaffected. memory.journal points at the call journal;
+			// memory.consolidate-every runs Consolidate every N turns (0 = manual).
+			if ex := lookupExtractor(cfg.Get("memory.extractor")); ex != nil {
+				every, _ := strconv.Atoi(cfg.Get("memory.consolidate-every"))
+				return NewLearner(mem, cfg.Get("session"), scope, ex, cfg.Get("memory.journal"), every), nil
 			}
 			return NewScoped(mem, cfg.Get("session"), scope), nil
 		},
