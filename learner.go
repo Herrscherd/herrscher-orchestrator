@@ -34,6 +34,10 @@ type Learner struct {
 	journal string // path to the call journal (e.g. <worktree>/.neublox/calls.log)
 	every   int    // run Consolidate every N observed turns (0 = manual only)
 	n       int
+	// seen tracks candidate keys already persisted this session so re-running
+	// Consolidate over the same journal does not re-link duplicate facts/skills
+	// every turn. Nodes upsert by Key anyway; this also guards the link writes.
+	seen map[string]bool
 }
 
 var _ contracts.Orchestrator = (*Learner)(nil)
@@ -41,7 +45,7 @@ var _ contracts.Orchestrator = (*Learner)(nil)
 // NewLearner builds a learning orchestrator. With a nil extractor it behaves
 // exactly like the default Curator (Consolidate is a no-op).
 func NewLearner(mem contracts.Memory, session string, scope contracts.MemoryScope, ex Extractor, journal string, every int) *Learner {
-	return &Learner{Curator: NewScoped(mem, session, scope), extract: ex, journal: journal, every: every}
+	return &Learner{Curator: NewScoped(mem, session, scope), extract: ex, journal: journal, every: every, seen: map[string]bool{}}
 }
 
 // Observe records the turn (default behaviour) and, every `every` turns, fires a
@@ -74,6 +78,9 @@ func (l *Learner) Consolidate(ctx context.Context) error {
 		return err
 	}
 	for _, c := range cands {
+		if l.seen[c.Node.Key] {
+			continue // already persisted this session — keep Consolidate idempotent
+		}
 		if c.Private {
 			if err := contracts.RecordPrivate(ctx, l.mem, l.scope, c.Node); err != nil {
 				return err
@@ -83,6 +90,7 @@ func (l *Learner) Consolidate(ctx context.Context) error {
 				return err
 			}
 		}
+		l.seen[c.Node.Key] = true
 	}
 	return nil
 }

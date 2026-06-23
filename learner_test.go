@@ -83,6 +83,30 @@ func TestConsolidatePersistsFactsSharedAndSkillsPrivate(t *testing.T) {
 	}
 }
 
+func TestConsolidateIsIdempotent(t *testing.T) {
+	mem := newRec()
+	ex := &fakeExtractor{}
+	scope := contracts.MemoryScope{Project: "projects/game", Agent: "agents/scripter"}
+	l := NewLearner(mem, "alpha", scope, ex, "", 0)
+	ctx := context.Background()
+
+	if err := l.Consolidate(ctx); err != nil {
+		t.Fatalf("first Consolidate: %v", err)
+	}
+	links := len(mem.links)
+	if links == 0 {
+		t.Fatal("first Consolidate recorded no links")
+	}
+	// The extractor re-returns the same candidates; a second run over the same
+	// journal must not re-link facts/skills already persisted this session.
+	if err := l.Consolidate(ctx); err != nil {
+		t.Fatalf("second Consolidate: %v", err)
+	}
+	if len(mem.links) != links {
+		t.Fatalf("second Consolidate wrote duplicate links: %d then %d", links, len(mem.links))
+	}
+}
+
 func TestConsolidateReadsJournalFile(t *testing.T) {
 	dir := t.TempDir()
 	journal := filepath.Join(dir, "calls.log")
