@@ -15,13 +15,14 @@ func init() {
 		},
 		Orchestrator: func(ctx context.Context, cfg contracts.PluginConfig, mem contracts.Memory) (contracts.Orchestrator, error) {
 			// The host passes the raw project/agent names (runtime state); we key
-			// them onto the shared spine here: projects/<name>, agents/<name>.
+			// them onto the shared spine via contracts.ProjectKey/AgentKey
+			// (single source of truth).
 			var scope contracts.MemoryScope
 			if p := cfg.Get("memory.project"); p != "" {
-				scope.Project = "projects/" + p
+				scope.Project = contracts.ProjectKey(p)
 			}
 			if a := cfg.Get("memory.agent"); a != "" {
-				scope.Agent = "agents/" + a
+				scope.Agent = contracts.AgentKey(a)
 			}
 			// Opt into the learning loop when the host names a registered
 			// extractor (the closed curation heuristics, plugged in by blank
