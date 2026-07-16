@@ -129,20 +129,28 @@ func turnLine(author, content, reply string) string {
 	return fmt.Sprintf("- %s: %s → %s", author, content, oneline(reply, maxReplyChars))
 }
 
-// oneline collapses s to a single space-separated line capped at max runes.
-func oneline(s string, max int) string {
+// oneline collapses s to a single space-separated line capped at limit runes.
+func oneline(s string, limit int) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if r := []rune(s); len(r) > max {
-		s = string(r[:max]) + "…"
+	if r := []rune(s); len(r) > limit {
+		s = string(r[:limit]) + "…"
 	}
 	return s
 }
 
 // capLines keeps the first n newline-separated lines (newest-first transcript).
 func capLines(s string, n int) string {
-	lines := strings.Split(s, "\n")
-	if len(lines) > n {
-		lines = lines[:n]
+	if n <= 0 {
+		return ""
 	}
-	return strings.Join(lines, "\n")
+	// Slice at the n-th newline instead of splitting the whole string and re-joining.
+	count := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			if count++; count == n {
+				return s[:i]
+			}
+		}
+	}
+	return s
 }
