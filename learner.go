@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"io"
 	"os"
 
 	"github.com/Herrscherd/herrscher-contracts"
@@ -34,6 +35,10 @@ type Learner struct {
 	journal string // path to the call journal (e.g. <worktree>/.neublox/calls.log)
 	every   int    // run Consolidate every N observed turns (0 = manual only)
 	n       int
+	// offset is the byte position read up to on the last Consolidate. The journal
+	// is append-only, so each run only reads/parses the tail appended since, turning
+	// per-consolidation cost from O(total journal) into O(new bytes).
+	offset int64
 	// seen tracks candidate keys already persisted this session so re-running
 	// Consolidate over the same journal does not re-link duplicate facts/skills
 	// every turn. Nodes upsert by Key anyway; this also guards the link writes.
@@ -68,12 +73,12 @@ func (l *Learner) Consolidate(ctx context.Context) error {
 	if l.extract == nil || l.mem == nil {
 		return nil
 	}
-	journal, _ := os.ReadFile(l.journal) // best-effort: missing file → ""
+	journal := l.readJournalTail() // best-effort: missing file / no new bytes → ""
 	var transcript string
 	if sg, err := l.mem.Recall(ctx, l.session, 0); err == nil {
 		transcript = sg.Root.Body
 	}
-	cands, err := l.extract.Extract(ctx, string(journal), transcript)
+	cands, err := l.extract.Extract(ctx, journal, transcript)
 	if err != nil {
 		return err
 	}
@@ -93,4 +98,33 @@ func (l *Learner) Consolidate(ctx context.Context) error {
 		l.seen[c.Node.Key] = true
 	}
 	return nil
+}
+
+// readJournalTail returns the journal bytes appended since the last Consolidate,
+// advancing the saved offset. It is best-effort: a missing/unreadable file yields
+// "". A shrink (log rotation/truncation) resets the offset and re-reads from the
+// start so no appended work is skipped.
+func (l *Learner) readJournalTail() string {
+	if l.journal == "" {
+		return ""
+	}
+	f, err := os.Open(l.journal)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err == nil && fi.Size() < l.offset {
+		l.offset = 0
+	}
+	if l.offset > 0 {
+		if _, err := f.Seek(l.offset, io.SeekStart); err != nil {
+			return ""
+		}
+	}
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return ""
+	}
+	l.offset += int64(len(b))
+	return string(b)
 }

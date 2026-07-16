@@ -98,15 +98,19 @@ func (c *Curator) Observe(ctx context.Context, p contracts.Prompt, reply string)
 	if sg, err := c.mem.Recall(ctx, c.session, 0); err == nil {
 		prev = sg.Root.Body
 	}
-	body := turnLine(p.Author, p.Content, reply)
+	var b strings.Builder
+	b.WriteString(turnLine(p.Author, p.Content, reply))
 	if prev != "" {
-		body += "\n" + prev
+		// prev is itself already capped to maxTurns lines; keep the newest
+		// maxTurns-1 so the new line plus the tail stays within maxTurns.
+		b.WriteByte('\n')
+		b.WriteString(capLines(prev, maxTurns-1))
 	}
 	return c.mem.Record(ctx, contracts.Node{
 		Key:   c.session,
 		Kind:  contracts.KindSession,
 		Title: "session " + strings.TrimPrefix(c.session, "sessions/"),
-		Body:  capLines(body, maxTurns),
+		Body:  b.String(),
 	})
 }
 
@@ -132,6 +136,9 @@ func turnLine(author, content, reply string) string {
 // oneline collapses s to a single space-separated line capped at limit runes.
 func oneline(s string, limit int) string {
 	s = strings.Join(strings.Fields(s), " ")
+	if len(s) <= limit {
+		return s // byte len ≥ rune count, so no truncation possible: skip the []rune copy
+	}
 	if r := []rune(s); len(r) > limit {
 		s = string(r[:limit]) + "…"
 	}
