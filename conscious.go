@@ -12,6 +12,11 @@ import (
 // next turn's primed context small.
 const recallK = 5
 
+// maxPending caps how many recall hits accumulate before the next Context
+// surfaces them, so a reply emitting many <recall> markers can't grow the
+// following prompt without bound.
+const maxPending = 12
+
 // memoryPreamble is the compact, always-on affordance that makes every backend
 // conscious of its persistent memory: that it exists, spans sessions, and can be
 // actively searched and written — not just passively received.
@@ -52,7 +57,7 @@ func (c *Curator) React(ctx context.Context, reply string) string {
 // recall searches memory for query and stashes the top-k hits so the next
 // Context call surfaces them (the two-turn progressive-disclosure round trip).
 func (c *Curator) recall(ctx context.Context, query string) {
-	if query == "" {
+	if query == "" || len(c.pending) >= maxPending {
 		return
 	}
 	var hits []contracts.Node
@@ -60,6 +65,9 @@ func (c *Curator) recall(ctx context.Context, query string) {
 		hits, _ = contracts.RecallRelevant(ctx, c.mem, c.scope, query, recallK)
 	} else {
 		hits, _ = c.mem.Search(ctx, contracts.Query{Text: query, Ranked: true, Limit: recallK})
+	}
+	if room := maxPending - len(c.pending); len(hits) > room {
+		hits = hits[:room]
 	}
 	c.pending = append(c.pending, hits...)
 }
