@@ -9,7 +9,11 @@ import (
 )
 
 // fakeMem is a minimal in-memory contracts.Memory for testing the orchestrator.
-type fakeMem struct{ nodes map[string]contracts.Node }
+type fakeMem struct {
+	nodes  map[string]contracts.Node
+	search []contracts.Node // returned verbatim by Search
+	links  [][3]string      // recorded (from, to, rel) triples
+}
 
 func newFake() *fakeMem { return &fakeMem{nodes: map[string]contracts.Node{}} }
 
@@ -32,9 +36,14 @@ func (f *fakeMem) Recall(_ context.Context, key string, depth int) (contracts.Su
 	}
 	return sg, nil
 }
-func (f *fakeMem) Search(context.Context, contracts.Query) ([]contracts.Node, error) { return nil, nil }
-func (f *fakeMem) Links(context.Context, string, string, string) error               { return nil }
-func (f *fakeMem) Close() error                                                      { return nil }
+func (f *fakeMem) Search(context.Context, contracts.Query) ([]contracts.Node, error) {
+	return f.search, nil
+}
+func (f *fakeMem) Links(_ context.Context, from, to, rel string) error {
+	f.links = append(f.links, [3]string{from, to, rel})
+	return nil
+}
+func (f *fakeMem) Close() error { return nil }
 
 var errNotFound = &notFound{}
 
@@ -56,8 +65,8 @@ func TestObserveThenContextHasContinuity(t *testing.T) {
 	mem := newFake()
 	c := New(mem, "alpha")
 	ctx := context.Background()
-	if got := c.Context(ctx); got != "" {
-		t.Fatalf("first turn Context should be empty, got %q", got)
+	if got := c.Context(ctx); !strings.Contains(got, "<recall>") || strings.Contains(got, "leo") {
+		t.Fatalf("first turn Context should be the bare affordance, got %q", got)
 	}
 	_ = c.Observe(ctx, contracts.Prompt{Author: "leo", Content: "deploy please"}, "done ✅")
 	got := c.Context(ctx)

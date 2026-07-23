@@ -29,6 +29,7 @@ type Curator struct {
 	mem     contracts.Memory
 	session string                // session node key
 	scope   contracts.MemoryScope // P1: shared project + private agent roots ({} = none)
+	pending []contracts.Node      // hits from the model's last <recall>, surfaced next Context
 }
 
 // New builds the default orchestrator for session over mem (mem may be nil),
@@ -70,7 +71,7 @@ func (c *Curator) Context(ctx context.Context) string {
 			writeNode(&b, n)
 		}
 	}
-	return strings.TrimSpace(b.String())
+	return c.frame(strings.TrimSpace(b.String()))
 }
 
 func writeNode(b *strings.Builder, n contracts.Node) {
