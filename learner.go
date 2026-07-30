@@ -147,23 +147,47 @@ func (l *Learner) DueForIdleRun(now, lastActivity time.Time) bool {
 	return true
 }
 
-// Observe records the turn (default behaviour) and, every `every` turns, fires a
+// Observe records the turn (default behaviour), stamps the last-activity clock
+// (the G5 idle trigger's activity signal), and, every `every` turns, fires a
 // best-effort Consolidate out of band so learning never breaks the turn loop.
+//
+// mu is held only briefly — to stamp lastActivity and read/advance the turn
+// counter — and is RELEASED before calling l.Consolidate, which re-acquires it.
+// Holding mu across that call would double-lock (Go mutexes are not reentrant)
+// and deadlock.
 func (l *Learner) Observe(ctx context.Context, p contracts.Prompt, reply string) error {
 	err := l.Curator.Observe(ctx, p, reply)
+	l.mu.Lock()
+	l.lastActivity = l.now()
+	var due bool
 	if l.every > 0 {
 		l.n++
-		if l.n%l.every == 0 {
-			_ = l.Consolidate(ctx)
-		}
+		due = l.n%l.every == 0
+	}
+	l.mu.Unlock()
+	if due {
+		_ = l.Consolidate(ctx)
 	}
 	return err
 }
 
 // Consolidate runs the extractor over the journal + transcript and persists each
 // candidate under the right scope. It is best-effort: a missing journal, a nil
-// extractor, or a nil Memory all yield a clean no-op.
+// extractor, or a nil Memory all yield a clean no-op. It is safe to call from
+// any goroutine (turn-path cadence, the G5 idle loop, or a standalone/test
+// call): it serialises every pass under mu so two passes never interleave.
 func (l *Learner) Consolidate(ctx context.Context) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.consolidateLocked(ctx)
+}
+
+// consolidateLocked holds the full consolidation body. The caller MUST already
+// hold l.mu (public Consolidate acquires it; the idle loop acquires it via
+// TryLock). It stamps lastRun at the top so every trigger path — per-turn
+// cadence, idle, or a manual call — uniformly resets the inactivity clock.
+func (l *Learner) consolidateLocked(ctx context.Context) error {
+	l.lastRun = l.now()
 	// Reset the pass-scoped audit trail on every return path, so the next pass
 	// never re-reports this pass's transitions. A deferred reset also caps the
 	// out-of-band buffer: Learner.Restore appends transitions between passes, so

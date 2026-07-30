@@ -1,6 +1,8 @@
 package orchestrator
 
 import (
+	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -91,4 +93,85 @@ func TestDueForIdleRun(t *testing.T) {
 			}
 		})
 	}
+}
+
+// fakeClock returns a time it can be advanced past for deterministic stamping.
+type fakeClock struct{ t time.Time }
+
+func (c *fakeClock) now() time.Time      { return c.t }
+func (c *fakeClock) add(d time.Duration) { c.t = c.t.Add(d) }
+
+func TestConsolidateStampsLastRun(t *testing.T) {
+	// nil extractor + nil mem: Consolidate is a no-op except for stamping lastRun.
+	l := NewLearner(nil, "s", contracts.MemoryScope{}, nil, "", 0)
+	clk := &fakeClock{t: time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)}
+	l.now = clk.now
+
+	if !l.lastRun.IsZero() {
+		t.Fatal("lastRun should start zero")
+	}
+	if err := l.Consolidate(context.Background()); err != nil {
+		t.Fatalf("Consolidate 1: %v", err)
+	}
+	first := l.lastRun
+	if first != clk.t {
+		t.Fatalf("lastRun not stamped on first Consolidate: got %v want %v", first, clk.t)
+	}
+	clk.add(3 * time.Hour) // a later manual/no-trigger call must re-stamp
+	if err := l.Consolidate(context.Background()); err != nil {
+		t.Fatalf("Consolidate 2: %v", err)
+	}
+	if !l.lastRun.After(first) {
+		t.Fatalf("lastRun did not advance across a second Consolidate: %v then %v", first, l.lastRun)
+	}
+}
+
+func TestObserveStampsLastActivity(t *testing.T) {
+	// nil mem: Curator.Observe is a no-op, cadence disabled (every=0), so Observe
+	// only stamps lastActivity — no Consolidate fires.
+	l := NewLearner(nil, "s", contracts.MemoryScope{}, nil, "", 0)
+	clk := &fakeClock{t: time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)}
+	l.now = clk.now
+
+	if err := l.Observe(context.Background(), contracts.Prompt{Author: "a", Content: "hi"}, "yo"); err != nil {
+		t.Fatalf("Observe 1: %v", err)
+	}
+	first := l.lastActivity
+	if first != clk.t {
+		t.Fatalf("lastActivity not stamped: got %v want %v", first, clk.t)
+	}
+	clk.add(time.Hour)
+	if err := l.Observe(context.Background(), contracts.Prompt{Author: "a", Content: "hi"}, "yo"); err != nil {
+		t.Fatalf("Observe 2: %v", err)
+	}
+	if !l.lastActivity.After(first) {
+		t.Fatalf("lastActivity did not advance across a second Observe: %v then %v", first, l.lastActivity)
+	}
+}
+
+// TestConcurrentObserveAndConsolidate exercises the interleaving of a turn-path
+// Observe (which may fire the cadence Consolidate) and a forced idle-triggered
+// Consolidate from a second goroutine. Its acceptance bar is a clean `-race`
+// run: no data race, no panic. Uses a real (empty) mergeMem so the full
+// Consolidate body (extract/sweep/merge/promote/report) executes.
+func TestConcurrentObserveAndConsolidate(t *testing.T) {
+	mem := &mergeMem{}
+	l := NewLearner(mem, "s", contracts.MemoryScope{}, plainExt{}, "", 1) // every=1: Observe fires Consolidate each turn
+	l.SetIdle(1, 1)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			_ = l.Observe(context.Background(), contracts.Prompt{Author: "a", Content: "hi"}, "yo")
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			_ = l.Consolidate(context.Background()) // forced idle-style call
+		}
+	}()
+	wg.Wait()
 }
