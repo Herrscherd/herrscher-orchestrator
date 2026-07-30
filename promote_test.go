@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -89,5 +90,161 @@ func TestSetPromoteDisabledByDefault(t *testing.T) {
 	l := NewLearner(nil, "s", contracts.MemoryScope{}, plainExt{}, "", 0)
 	if l.promoteMinAge != 0 {
 		t.Fatalf("promoteMinAge = %v, want 0 (disabled by default)", l.promoteMinAge)
+	}
+}
+
+func TestPromotedKey(t *testing.T) {
+	got := promotedKey("projects/neublox", "agents/roblox-dev/skills/retry-http")
+	if want := "projects/neublox/skills/retry-http"; got != want {
+		t.Errorf("promotedKey = %q, want %q", got, want)
+	}
+}
+
+// promoteLearner builds a Learner over mem with a project+agent scope and the
+// promotion bar set.
+func promoteLearner(mem contracts.Memory, minAgeDays int) *Learner {
+	l := NewLearner(mem, "s", contracts.MemoryScope{
+		Project: "projects/p",
+		Agent:   "agents/a",
+	}, plainExt{}, "", 0)
+	l.SetPromote(time.Duration(minAgeDays) * 24 * time.Hour)
+	return l
+}
+
+func TestPromoteDisabledIsNoop(t *testing.T) {
+	mem := &mergeMem{nodes: []contracts.Node{promoNode("agents/a/skills/x", contracts.StateActive, 20)}}
+	l := promoteLearner(mem, 0) // disabled
+	if err := l.Promote(context.Background()); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+	if len(mem.records) != 0 || len(mem.links) != 0 {
+		t.Fatalf("disabled promotion must be a no-op; got %d records %d links", len(mem.records), len(mem.links))
+	}
+}
+
+func TestPromoteNoScopeIsNoop(t *testing.T) {
+	mem := &mergeMem{nodes: []contracts.Node{promoNode("agents/a/skills/x", contracts.StateActive, 20)}}
+	l := NewLearner(mem, "s", contracts.MemoryScope{Agent: "agents/a"}, plainExt{}, "", 0) // no Project
+	l.SetPromote(10 * 24 * time.Hour)
+	if err := l.Promote(context.Background()); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+	if len(mem.records) != 0 {
+		t.Fatalf("no project scope must be a no-op; got %d records", len(mem.records))
+	}
+}
+
+func TestPromoteHappyPath(t *testing.T) {
+	orig := promoNode("agents/a/skills/x", contracts.StateActive, 20)
+	orig.Body = "retry with backoff"
+	mem := &mergeMem{nodes: []contracts.Node{orig}}
+	l := promoteLearner(mem, 10)
+	if err := l.Promote(context.Background()); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+	// shared copy written under the project scope
+	var copy *contracts.Node
+	for i := range mem.records {
+		if mem.records[i].Key == "projects/p/skills/x" {
+			copy = &mem.records[i]
+		}
+	}
+	if copy == nil {
+		t.Fatal("shared copy not recorded under projects/p/skills/x")
+	}
+	if copy.Body != "retry with backoff" {
+		t.Errorf("copy body = %q, want the original body", copy.Body)
+	}
+	if copy.Meta["promotedFrom"] != "agents/a/skills/x" {
+		t.Errorf("copy promotedFrom = %q, want the original key", copy.Meta["promotedFrom"])
+	}
+	if copy.Meta[MetaPromotedTo] != "" {
+		t.Errorf("copy must not itself carry promotedTo: %q", copy.Meta[MetaPromotedTo])
+	}
+	// original labeled (last record for that key)
+	var labeled *contracts.Node
+	for i := range mem.records {
+		if mem.records[i].Key == "agents/a/skills/x" {
+			labeled = &mem.records[i]
+		}
+	}
+	if labeled == nil || labeled.Meta[MetaPromotedTo] != "projects/p/skills/x" {
+		t.Fatalf("original not labeled with promotedTo: %+v", labeled)
+	}
+	// original state untouched, lastSeen preserved
+	if labeled.Meta[contracts.MetaState] != contracts.StateActive {
+		t.Errorf("original state changed to %q", labeled.Meta[contracts.MetaState])
+	}
+	if labeled.Meta[contracts.MetaLastSeen] != orig.Meta[contracts.MetaLastSeen] {
+		t.Errorf("original lastSeen bumped: %q", labeled.Meta[contracts.MetaLastSeen])
+	}
+	// link original -> copy
+	var linked bool
+	for _, ln := range mem.links {
+		if ln == [3]string{"agents/a/skills/x", "projects/p/skills/x", "promoted-to"} {
+			linked = true
+		}
+	}
+	if !linked {
+		t.Errorf("missing promoted-to link: %+v", mem.links)
+	}
+}
+
+func TestPromoteScopeIsolation(t *testing.T) {
+	// A different agent's private node must never be scanned/promoted.
+	mem := &mergeMem{nodes: []contracts.Node{promoNode("agents/other/skills/x", contracts.StateActive, 20)}}
+	l := promoteLearner(mem, 10)
+	if err := l.Promote(context.Background()); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+	if len(mem.records) != 0 {
+		t.Fatalf("another agent's node was promoted; got %d records", len(mem.records))
+	}
+}
+
+func TestPromoteIdempotentRerun(t *testing.T) {
+	mem := &mergeMem{nodes: []contracts.Node{promoNode("agents/a/skills/x", contracts.StateActive, 20)}}
+	l := promoteLearner(mem, 10)
+	if err := l.Promote(context.Background()); err != nil {
+		t.Fatalf("Promote 1: %v", err)
+	}
+	// The fake's Search returns the ORIGINAL nodes slice, not the labeled write;
+	// simulate the durable label by replacing the node with its labeled version.
+	for i := range mem.nodes {
+		if mem.nodes[i].Key == "agents/a/skills/x" {
+			mem.nodes[i].Meta[MetaPromotedTo] = "projects/p/skills/x"
+		}
+	}
+	before := len(mem.records)
+	if err := l.Promote(context.Background()); err != nil {
+		t.Fatalf("Promote 2: %v", err)
+	}
+	if len(mem.records) != before {
+		t.Fatalf("re-run promoted again: records %d -> %d", before, len(mem.records))
+	}
+}
+
+func TestPromoteBestEffortOnRecordError(t *testing.T) {
+	// Two eligible nodes; the shared copy of the first fails to write. The second
+	// must still be promoted, and Promote returns the first error.
+	mem := &mergeMem{
+		nodes: []contracts.Node{
+			promoNode("agents/a/skills/x", contracts.StateActive, 20),
+			promoNode("agents/a/skills/y", contracts.StateActive, 20),
+		},
+		recErrOn: "projects/p/skills/x",
+	}
+	l := promoteLearner(mem, 10)
+	if err := l.Promote(context.Background()); err == nil {
+		t.Fatal("expected the failing copy's error to surface")
+	}
+	var sawY bool
+	for _, r := range mem.records {
+		if r.Key == "projects/p/skills/y" {
+			sawY = true
+		}
+	}
+	if !sawY {
+		t.Fatal("sibling promotion was skipped after the first node's failure")
 	}
 }
