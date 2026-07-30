@@ -16,6 +16,9 @@ func init() {
 			Config: []contracts.Setting{
 				{Key: "stale-days", Env: "AGENT_STALE_DAYS", Help: "days of no re-observation before a node is marked stale; <=0 disables (default 30)", Required: false},
 				{Key: "archive-days", Env: "AGENT_ARCHIVE_DAYS", Help: "days of no re-observation before a node is archived; <=0 disables (default 90)", Required: false},
+				{Key: "merge-min-nodes", Env: "MEMORY_MERGE_MIN", Help: "min nodes in a domain group before the merge pass folds them into an umbrella; <=0 disables (default 0, off)", Required: false},
+				{Key: "merge-target", Env: "MEMORY_MERGE_TARGET", Help: "which nodes the merge pass considers: stale | active | all (default stale)", Required: false},
+				{Key: "merge-max", Env: "MEMORY_MERGE_MAX", Help: "cap on nodes handed to the merger per domain group (default 40)", Required: false},
 			},
 		},
 		Orchestrator: func(ctx context.Context, cfg contracts.PluginConfig, mem contracts.Memory) (contracts.Orchestrator, error) {
@@ -40,6 +43,9 @@ func init() {
 				every, _ := strconv.Atoi(cfg.Get("memory.consolidate-every"))
 				l := NewLearner(mem, cfg.Get("session"), scope, ex, cfg.Get("memory.journal"), every)
 				l.SetStaleness(stale, archive)
+				mergeMin, _ := strconv.Atoi(cfg.Get("merge-min-nodes"))
+				mergeMax, _ := strconv.Atoi(cfg.Get("merge-max"))
+				l.SetMerge(mergeMin, mergeMax, cfg.Get("merge-target"))
 				return l, nil
 			}
 			c := NewScoped(mem, cfg.Get("session"), scope)
