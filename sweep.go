@@ -62,9 +62,13 @@ func (c *Curator) Sweep(ctx context.Context) error {
 		// obsidian budget) must not abort the rest of the sweep, or one bad
 		// node would freeze decay for every node after it, every pass. Record
 		// the first error and keep going; Consolidate swallows the return.
-		if err := c.mem.Record(ctx, n); err != nil && firstErr == nil {
-			firstErr = err
+		if err := c.mem.Record(ctx, n); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue // do not record a transition for a write that didn't land
 		}
+		c.transitions = append(c.transitions, Transition{Key: n.Key, From: cur, To: next, Kind: "sweep"})
 	}
 	return firstErr
 }

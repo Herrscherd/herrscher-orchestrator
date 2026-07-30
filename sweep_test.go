@@ -125,3 +125,50 @@ func TestSweepReactivation(t *testing.T) {
 		t.Fatalf("lastSeen disturbed by state write: %q", got)
 	}
 }
+
+func TestSweepPopulatesTransitionOnChange(t *testing.T) {
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	f := newSweepFakeMem()
+	seed(f, "old", 45, now) // 45 days > 30-day staleAfter, absent Meta[MetaState] == active
+	c := NewScoped(f, "s", contracts.MemoryScope{})
+	c.now = func() time.Time { return now }
+	if err := c.Sweep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.transitions) != 1 {
+		t.Fatalf("transitions = %d, want 1", len(c.transitions))
+	}
+	tr := c.transitions[0]
+	if tr.Key != "old" || tr.From != contracts.StateActive || tr.To != contracts.StateStale || tr.Kind != "sweep" {
+		t.Fatalf("unexpected transition: %+v", tr)
+	}
+}
+
+func TestSweepNoTransitionWhenUnchanged(t *testing.T) {
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	f := newSweepFakeMem()
+	seed(f, "fresh", 1, now) // already active; must not churn
+	c := NewScoped(f, "s", contracts.MemoryScope{})
+	c.now = func() time.Time { return now }
+	if err := c.Sweep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.transitions) != 0 {
+		t.Fatalf("transitions = %d, want 0 for an unchanged node", len(c.transitions))
+	}
+}
+
+func TestSweepWriteFailureProducesNoTransition(t *testing.T) {
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	f := newSweepFakeMem()
+	seed(f, "bad", 45, now) // would transition -> stale, but its write fails
+	f.failOn = "bad"
+	c := NewScoped(f, "s", contracts.MemoryScope{})
+	c.now = func() time.Time { return now }
+	if err := c.Sweep(context.Background()); err == nil {
+		t.Fatal("expected the failing node's error to be returned")
+	}
+	if len(c.transitions) != 0 {
+		t.Fatalf("transitions = %d, want 0: a failed write must not claim a transition", len(c.transitions))
+	}
+}

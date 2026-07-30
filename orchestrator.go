@@ -24,6 +24,16 @@ const (
 	maxReplyChars   = 200
 )
 
+// Transition is one state change a curator pass made to one node, for the
+// audit report. Kind is "sweep" (G3 staleness), "merge" (G2 umbrella-fold), or
+// "restore" (an explicit reactivation).
+type Transition struct {
+	Key  string // node Key that changed
+	From string // prior Meta[MetaState] ("" treated as StateActive)
+	To   string // new Meta[MetaState]
+	Kind string // "sweep" | "merge" | "restore"
+}
+
 // Curator is the default Orchestrator. With a nil Memory it still answers, just
 // without continuity (Context returns "", Observe no-ops).
 type Curator struct {
@@ -35,6 +45,12 @@ type Curator struct {
 	now          func() time.Time // injectable clock (defaults to time.Now); tests override
 	staleAfter   time.Duration    // age before a node is marked stale (<=0 disables)
 	archiveAfter time.Duration    // age before a node is archived (<=0 disables)
+
+	// transitions is this Consolidate pass's audit trail: every state change
+	// Sweep/Merge/Restore made. Reset to nil at the end of Consolidate (see
+	// learner.go) regardless of outcome, so a report never accumulates
+	// duplicate rows across passes.
+	transitions []Transition
 }
 
 // New builds the default orchestrator for session over mem (mem may be nil),
