@@ -15,6 +15,10 @@ import (
 // contracts change is needed.
 const MetaPromotedTo = "promotedTo"
 
+// MetaPromotedFrom, set on a shared copy, names the Key of the private node it
+// was promoted from (the back-pointer counterpart to MetaPromotedTo).
+const MetaPromotedFrom = "promotedFrom"
+
 // SetPromote configures the ★ cross-agent promotion pass. minAge <= 0 disables
 // the pass (default).
 func (l *Learner) SetPromote(minAge time.Duration) {
@@ -57,6 +61,13 @@ func (l *Learner) promoteEligible(n contracts.Node, now time.Time) bool {
 //
 // project is a plain string (MemoryScope.Project's own type in this contracts
 // version — there is no distinct ProjectKey type to bind to).
+//
+// This intentionally collides same-tail nodes from different agents onto one
+// shared project node: e.g. both "agents/x/skills/retry-http" and
+// "agents/y/skills/retry-http" map to "projects/<p>/skills/retry-http". That
+// is by design — peers converging on the same node dedup onto a single
+// shared copy rather than each getting their own; the last promotion to run
+// upserts and wins on Body.
 func promotedKey(project string, agentKey string) string {
 	_, rest, _ := strings.Cut(agentKey, "/") // "agents/<agent>/<tail>" -> "<agent>/<tail>"
 	_, tail, _ := strings.Cut(rest, "/")     // -> "<tail>"
@@ -84,7 +95,7 @@ func (l *Learner) applyPromotion(ctx context.Context, n contracts.Node) error {
 	dup.Key = promotedKey(l.scope.Project, n.Key)
 	dup.Meta = cloneMeta(n.Meta)
 	delete(dup.Meta, MetaPromotedTo) // the copy is not itself "promoted"
-	dup.Meta["promotedFrom"] = n.Key
+	dup.Meta[MetaPromotedFrom] = n.Key
 	if err := contracts.RecordShared(ctx, l.mem, l.scope, dup); err != nil {
 		return err
 	}
@@ -102,7 +113,7 @@ func (l *Learner) applyPromotion(ctx context.Context, n contracts.Node) error {
 	return l.mem.Record(ctx, n)
 }
 
-// Promote copies each eligible private skill of this agent's own scope into the
+// Promote copies each eligible private node of this agent's own scope into the
 // shared project scope, so peer agents inherit it via RecallScoped. Best-effort
 // and idempotent: disabled (promoteMinAge<=0), no project/agent scope, or nil
 // Memory all yield a clean no-op; a per-node write failure is recorded as the

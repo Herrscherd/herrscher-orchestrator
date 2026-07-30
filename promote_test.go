@@ -249,18 +249,6 @@ func TestPromoteBestEffortOnRecordError(t *testing.T) {
 	}
 }
 
-// orderMem records the order of key-writes so we can assert the pass
-// ordering Sweep -> Merge -> Promote.
-type orderMem struct {
-	mergeMem
-	order []string
-}
-
-func (m *orderMem) Record(ctx context.Context, n contracts.Node) error {
-	m.order = append(m.order, n.Key)
-	return m.mergeMem.Record(ctx, n)
-}
-
 func TestConsolidateRunsPromoteAfterMerge(t *testing.T) {
 	// A single eligible private node; with a nil extractor Extract yields nothing,
 	// but Sweep/Merge/Promote still run at the Consolidate tail. Promote must fire
