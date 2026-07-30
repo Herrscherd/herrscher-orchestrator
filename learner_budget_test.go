@@ -1,7 +1,10 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/Herrscherd/herrscher-contracts"
@@ -10,8 +13,9 @@ import (
 // budgetMem records nodes but refuses any body longer than `limit` runes with a
 // *contracts.BudgetError — the same contract the obsidian per-node budget uses.
 type budgetMem struct {
-	nodes map[string]contracts.Node
-	limit int
+	nodes    map[string]contracts.Node
+	limit    int
+	searches int
 }
 
 func newBudgetMem(limit int) *budgetMem {
@@ -29,6 +33,7 @@ func (m *budgetMem) Recall(_ context.Context, key string, _ int) (contracts.Subg
 	return contracts.Subgraph{Root: contracts.Node{Key: key}}, nil
 }
 func (m *budgetMem) Search(context.Context, contracts.Query) ([]contracts.Node, error) {
+	m.searches++
 	return nil, nil
 }
 func (m *budgetMem) Links(context.Context, string, string, string) error { return nil }
@@ -176,5 +181,57 @@ func TestQueueDedupsByKey(t *testing.T) {
 	}
 	if len(l.pending) != 1 {
 		t.Fatalf("queue must dedup by key across passes: %d", len(l.pending))
+	}
+}
+
+// emptyingExtractor shrinks by returning a node with an empty Body — a
+// misbehaving consolidator the Learner must refuse rather than persist as junk.
+type emptyingExtractor struct{ oneBig }
+
+func (e *emptyingExtractor) Consolidate(_ context.Context, over contracts.Node, _ int) (contracts.Node, error) {
+	over.Body = ""
+	return over, nil
+}
+
+func TestPersistRejectsEmptyConsolidatorResult(t *testing.T) {
+	mem := newBudgetMem(5)
+	ex := &emptyingExtractor{oneBig: oneBig{body: "0123456789"}}
+	l := NewLearner(mem, "s", mustScope(), ex, "", 0)
+	if err := l.Consolidate(context.Background()); err != nil {
+		t.Fatalf("Consolidate: %v", err)
+	}
+	if _, ok := mem.nodes["facts/big"]; ok {
+		t.Fatal("empty consolidator result must not be persisted")
+	}
+	if len(l.pending) != 1 {
+		t.Fatalf("candidate not queued after rejected consolidation: %+v", l.pending)
+	}
+}
+
+func TestSweepRunsAfterEnqueue(t *testing.T) {
+	mem := newBudgetMem(5)
+	ex := &oneBig{body: "0123456789"} // over budget, no consolidator → enqueued
+	l := NewLearner(mem, "s", mustScope(), ex, "", 0)
+	if err := l.Consolidate(context.Background()); err != nil {
+		t.Fatalf("Consolidate: %v", err)
+	}
+	if mem.searches == 0 {
+		t.Fatal("staleness sweep did not run after an enqueue")
+	}
+}
+
+func TestEnqueueEmitsWarn(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(prev)
+
+	mem := newBudgetMem(5)
+	l := NewLearner(mem, "s", mustScope(), &oneBig{body: "0123456789"}, "", 0)
+	if err := l.Consolidate(context.Background()); err != nil {
+		t.Fatalf("Consolidate: %v", err)
+	}
+	if !strings.Contains(buf.String(), "over budget") {
+		t.Fatalf("expected a WARN mentioning the budget, got: %q", buf.String())
 	}
 }

@@ -47,6 +47,10 @@ var errEnqueue = errors.New("orchestrator: candidate over budget, queued for ret
 // default Curator: it keeps the same per-turn Context/Observe behaviour and
 // implements a real Consolidate that runs an Extractor over the journal +
 // transcript and persists facts (shared) and skills (private) via the P1 scope.
+//
+// A Learner is single-goroutine per session: Consolidate runs synchronously from
+// Observe on the turn path, so pending/seen/offset are intentionally not
+// mutex-guarded.
 type Learner struct {
 	*Curator
 	extract Extractor
@@ -108,9 +112,9 @@ func (l *Learner) Consolidate(ctx context.Context) error {
 		transcript = sg.Root.Body
 	}
 	cands, err := l.extract.Extract(ctx, journal, transcript)
-	if err != nil {
-		return err
-	}
+	if err != nil && firstErr == nil {
+		firstErr = err // record it, but still run the sweep below (invariant:
+	} // learning never breaks a turn) and preserve any drain error
 	for _, c := range cands {
 		if l.seen[c.Node.Key] {
 			continue // already persisted this session — keep Consolidate idempotent
@@ -171,7 +175,7 @@ func (l *Learner) persist(ctx context.Context, c Candidate) error {
 		return errEnqueue
 	}
 	merged, cerr := cons.Consolidate(ctx, c.Node, be.Limit)
-	if cerr != nil || utf8.RuneCountInString(merged.Body) > be.Limit {
+	if cerr != nil || merged.Key != c.Node.Key || merged.Body == "" || utf8.RuneCountInString(merged.Body) > be.Limit {
 		slog.Warn("memory: consolidation did not bring candidate within budget; queued for retry",
 			"key", c.Node.Key, "runes", be.Runes, "limit", be.Limit, "err", cerr)
 		return errEnqueue
@@ -201,10 +205,11 @@ func (l *Learner) enqueue(c Candidate) {
 	l.pending = append(l.pending, c)
 }
 
-// drain re-attempts each pending candidate through persist, returning those still
-// refused. A now-successful candidate is marked seen; a non-budget failure is
-// recorded in *firstErr and the candidate dropped (it re-extracts from the
-// journal if still relevant).
+// drain re-attempts each pending candidate through persist. A now-successful
+// candidate is marked seen and removed from the queue; anything still failing —
+// whether still over budget or a transient non-budget error — stays queued for a
+// later pass, since the journal offset already advanced past it and the queue is
+// its only remaining lifeline.
 func (l *Learner) drain(ctx context.Context, firstErr *error) {
 	var still []Candidate
 	for _, c := range l.pending {
@@ -217,6 +222,9 @@ func (l *Learner) drain(ctx context.Context, firstErr *error) {
 			if *firstErr == nil {
 				*firstErr = perr
 			}
+			still = append(still, c) // keep it queued: the journal offset already
+			// advanced past this candidate, so the queue is its only lifeline; a
+			// transient non-budget failure must not drop a fact we committed to retry
 		}
 	}
 	l.pending = still
