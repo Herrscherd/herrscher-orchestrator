@@ -45,6 +45,12 @@ type Consolidator interface {
 // Consolidate.
 var errEnqueue = errors.New("orchestrator: candidate over budget, queued for retry")
 
+// idlePollInterval is how often the G5 idle loop checks DueForIdleRun. It is a
+// package var (not a const) solely so tests can shorten it to exercise
+// Start/idleLoop and ctx-cancellation without real waits; it only needs to be
+// finer than idle-hours' granularity to detect the threshold promptly.
+var idlePollInterval = 10 * time.Minute
+
 // Learner is the richer Orchestrator that adds the learning loop on top of the
 // default Curator: it keeps the same per-turn Context/Observe behaviour and
 // implements a real Consolidate that runs an Extractor over the journal +
@@ -145,6 +151,55 @@ func (l *Learner) DueForIdleRun(now, lastActivity time.Time) bool {
 		return false
 	}
 	return true
+}
+
+// Start runs the G5 inactivity poll loop until ctx is cancelled. It is a no-op
+// if the idle trigger is disabled (SetIdle never called or idleDays <= 0). The
+// host calls this once per bridge process, right after constructing the
+// orchestrator; it never blocks a turn — the loop only ever fires Consolidate
+// from its own goroutine, single-flighted against the turn path via TryLock.
+func (l *Learner) Start(ctx context.Context) {
+	if l.idleDays <= 0 {
+		return
+	}
+	go l.idleLoop(ctx)
+}
+
+// idleLoop ticks every idlePollInterval and evaluates one idleTick per tick,
+// returning when ctx is cancelled (the bridge process's root context, so the
+// goroutine is cleaned up automatically on session teardown).
+func (l *Learner) idleLoop(ctx context.Context) {
+	t := time.NewTicker(idlePollInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			l.idleTick(ctx)
+		}
+	}
+}
+
+// idleTick evaluates the inactivity predicate and, if due, runs one Consolidate
+// out of band. It first reads lastActivity/lastRun under a brief Lock (always
+// safe to wait for). If due, it takes mu with TryLock — never Lock — so it never
+// blocks the turn path (invariant 2): on success it runs consolidateLocked while
+// holding the lock; on TryLock failure (a turn-path Consolidate holds the lock)
+// it skips this tick and retries at the next one. Extracted from idleLoop so
+// tests can drive it directly with a fake clock.
+func (l *Learner) idleTick(ctx context.Context) {
+	l.mu.Lock()
+	due := l.DueForIdleRun(l.now(), l.lastActivity)
+	l.mu.Unlock()
+	if !due {
+		return
+	}
+	if !l.mu.TryLock() {
+		return // turn-path Consolidate holds the lock; never block — retry next tick
+	}
+	_ = l.consolidateLocked(ctx) // best-effort; error swallowed, like the cadence path
+	l.mu.Unlock()
 }
 
 // Observe records the turn (default behaviour), stamps the last-activity clock

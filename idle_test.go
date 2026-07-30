@@ -175,3 +175,105 @@ func TestConcurrentObserveAndConsolidate(t *testing.T) {
 	}()
 	wg.Wait()
 }
+
+// countExt is an Extractor that counts Extract calls — a proxy for "Consolidate
+// actually ran its body". Consolidate only calls Extract when both extract and
+// mem are non-nil, so pair it with a non-nil mergeMem.
+type countExt struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (c *countExt) Extract(context.Context, string, string) ([]Candidate, error) {
+	c.mu.Lock()
+	c.n++
+	c.mu.Unlock()
+	return nil, nil
+}
+func (c *countExt) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n
+}
+
+// idleTickLearner builds a Learner whose Consolidate body runs (non-nil mem +
+// countExt) with the idle trigger configured and a fixed clock.
+func idleTickLearner(days, hours int, now time.Time) (*Learner, *countExt) {
+	ext := &countExt{}
+	l := NewLearner(&mergeMem{}, "s", contracts.MemoryScope{}, ext, "", 0)
+	l.SetIdle(days, hours)
+	l.now = func() time.Time { return now }
+	return l, ext
+}
+
+func TestIdleTickFiresWhenDue(t *testing.T) {
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	l, ext := idleTickLearner(7, 2, now)
+	l.lastRun = now.Add(-10 * 24 * time.Hour) // 10 days ago >= 7
+	l.lastActivity = now.Add(-5 * time.Hour)  // 5h idle >= 2h
+	l.idleTick(context.Background())
+	if ext.count() != 1 {
+		t.Fatalf("idleTick did not fire Consolidate once when due; extract calls=%d", ext.count())
+	}
+}
+
+func TestIdleTickSkipsWhenNotDue(t *testing.T) {
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	l, ext := idleTickLearner(7, 2, now)
+	l.lastRun = now.Add(-10 * 24 * time.Hour)
+	l.lastActivity = now.Add(-30 * time.Minute) // only 30m idle < 2h → not due
+	l.idleTick(context.Background())
+	if ext.count() != 0 {
+		t.Fatalf("idleTick fired when not due; extract calls=%d", ext.count())
+	}
+}
+
+func TestStartDisabledSpawnsNothing(t *testing.T) {
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	l, ext := idleTickLearner(0, 2, now) // idleDays=0 → disabled
+	l.lastRun = now.Add(-100 * 24 * time.Hour)
+	l.lastActivity = now.Add(-100 * time.Hour)
+
+	old := idlePollInterval
+	idlePollInterval = time.Millisecond
+	defer func() { idlePollInterval = old }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	l.Start(ctx)
+	time.Sleep(30 * time.Millisecond) // several would-be ticks
+	if ext.count() != 0 {
+		t.Fatalf("disabled Start must never fire Consolidate; extract calls=%d", ext.count())
+	}
+}
+
+func TestStartFiresWhenDueThenStopsOnCancel(t *testing.T) {
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	l, ext := idleTickLearner(7, 2, now)
+	l.lastRun = now.Add(-10 * 24 * time.Hour)
+	l.lastActivity = now.Add(-5 * time.Hour)
+
+	old := idlePollInterval
+	idlePollInterval = time.Millisecond
+	defer func() { idlePollInterval = old }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	l.Start(ctx)
+
+	// Wait (bounded) for at least one idle-triggered Consolidate.
+	deadline := time.Now().Add(2 * time.Second)
+	for ext.count() == 0 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if ext.count() == 0 {
+		t.Fatal("Start never fired an idle Consolidate when due")
+	}
+
+	cancel()
+	time.Sleep(20 * time.Millisecond) // let the loop observe ctx.Done and return
+	stopped := ext.count()
+	time.Sleep(30 * time.Millisecond)
+	if ext.count() != stopped {
+		t.Fatalf("idle loop kept firing after ctx cancel: %d -> %d", stopped, ext.count())
+	}
+}
