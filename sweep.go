@@ -28,6 +28,9 @@ func (c *Curator) Sweep(ctx context.Context) error {
 	now := c.now().UTC()
 	var firstErr error
 	for _, n := range nodes {
+		if n.Meta[MetaMergedInto] != "" {
+			continue // merged originals are terminal; never reactivate a folded fragment
+		}
 		stamp := n.Meta[contracts.MetaLastSeen]
 		if stamp == "" {
 			stamp = n.Meta["capturedAt"]

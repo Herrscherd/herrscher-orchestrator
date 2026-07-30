@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Herrscherd/herrscher-contracts"
 )
@@ -243,6 +244,28 @@ func TestMergeTargetFiltersToStale(t *testing.T) {
 	for _, n := range f.calls[0] {
 		if n.Key == "act" {
 			t.Error("active node leaked into a stale-target merge")
+		}
+	}
+}
+
+func TestSweepSkipsMergedOriginals(t *testing.T) {
+	// A merged original with a FRESH lastSeen would, without the guard, be
+	// re-derived as active and reactivated. The guard must keep it archived.
+	fresh := "2026-07-30T00:00:00Z"
+	n := contracts.Node{Key: "facts/a", Body: "x", Meta: map[string]string{
+		MetaMergedInto:         "facts/u",
+		contracts.MetaState:    contracts.StateArchived,
+		contracts.MetaLastSeen: fresh,
+	}}
+	mem := &mergeMem{nodes: []contracts.Node{n}}
+	c := NewScoped(mem, "s", contracts.MemoryScope{})
+	c.SetStaleness(30*24*time.Hour, 90*24*time.Hour)
+	if err := c.Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	for _, r := range mem.records {
+		if r.Key == "facts/a" {
+			t.Fatalf("merged original was rewritten by Sweep (state now %q)", r.Meta[contracts.MetaState])
 		}
 	}
 }
