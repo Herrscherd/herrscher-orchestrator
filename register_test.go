@@ -28,6 +28,26 @@ func TestStaleDuration(t *testing.T) {
 	}
 }
 
+func TestManifestHasPromoteSetting(t *testing.T) {
+	var found *contracts.Setting
+	for _, p := range contracts.Default.Orchestrators() {
+		if p.Manifest.Category != contracts.CategoryOrchestrator {
+			continue
+		}
+		for i := range p.Manifest.Config {
+			if p.Manifest.Config[i].Key == "promote-min-age-days" {
+				found = &p.Manifest.Config[i]
+			}
+		}
+	}
+	if found == nil {
+		t.Fatal("manifest missing promote-min-age-days setting")
+	}
+	if found.Env != "MEMORY_PROMOTE_MIN_AGE_DAYS" {
+		t.Errorf("env = %q, want MEMORY_PROMOTE_MIN_AGE_DAYS", found.Env)
+	}
+}
+
 func TestOrchestratorFactoryWiresStaleness(t *testing.T) {
 	var plugin contracts.Plugin
 	for _, p := range contracts.Default.Orchestrators() {
