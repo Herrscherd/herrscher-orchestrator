@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Herrscherd/herrscher-contracts"
@@ -78,6 +79,12 @@ type Learner struct {
 	mergeMin    int
 	mergeMax    int
 	mergeTarget string
+
+	// promoteMinAge configures the ★ cross-agent promotion pass (Learner.Promote):
+	// the minimum a private node's lastSeen must exceed its capturedAt before the
+	// node is eligible to be copied into the shared project scope. <=0 disables the
+	// pass (opt-in, default off); set via SetPromote.
+	promoteMinAge time.Duration
 
 	// reportEnabled/reportPrefix configure the G4 audit-report pass
 	// (Learner.report). Both are set via SetReport; register.go always calls
