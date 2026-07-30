@@ -72,6 +72,23 @@ func TestManifestHasIdleSettings(t *testing.T) {
 	}
 }
 
+func TestManifestHasRawArchiveSetting(t *testing.T) {
+	var found *contracts.Setting
+	for _, o := range contracts.Default.Orchestrators() {
+		for i := range o.Manifest.Config {
+			if o.Manifest.Config[i].Key == "raw-archive" {
+				found = &o.Manifest.Config[i]
+			}
+		}
+	}
+	if found == nil {
+		t.Fatal("raw-archive setting missing from orchestrator manifest")
+	}
+	if found.Env != "MEMORY_RAW_ARCHIVE" {
+		t.Fatalf("raw-archive Env = %q, want MEMORY_RAW_ARCHIVE", found.Env)
+	}
+}
+
 func TestOrchestratorFactoryWiresStaleness(t *testing.T) {
 	var plugin contracts.Plugin
 	for _, p := range contracts.Default.Orchestrators() {

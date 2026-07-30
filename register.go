@@ -24,6 +24,7 @@ func init() {
 				{Key: "promote-min-age-days", Env: "MEMORY_PROMOTE_MIN_AGE_DAYS", Help: "days a private node's lastSeen must exceed its capturedAt before the curator promotes it to the shared project scope; <=0 disables (default 0, off)", Required: false},
 				{Key: "idle-days", Env: "MEMORY_IDLE_DAYS", Help: "days since the last Consolidate run before the G5 inactivity trigger may fire; <=0 disables G5 (default 0, off)", Required: false},
 				{Key: "idle-hours", Env: "MEMORY_IDLE_HOURS", Help: "hours of quiet (no observed turn) required, once idle-days has elapsed, before the idle trigger fires; only consulted when idle-days > 0; 0 removes the quiet-period gate so it fires as soon as idle-days elapses (default 2)", Required: false},
+				{Key: "raw-archive", Env: "MEMORY_RAW_ARCHIVE", Help: "when true (1/on), the learner archives one untruncated raw transcript node per turn (G7 full-text tier), surfaced only by memory search --raw; default off (append-heavy)", Required: false},
 			},
 		},
 		Orchestrator: func(ctx context.Context, cfg contracts.PluginConfig, mem contracts.Memory) (contracts.Orchestrator, error) {
@@ -61,6 +62,8 @@ func init() {
 					idleHours = v
 				}
 				l.SetIdle(idleDays, idleHours)
+				rawArchive := isTruthy(cfg.Get("raw-archive"))
+				l.SetRawArchive(rawArchive)
 				return l, nil
 			}
 			c := NewScoped(mem, cfg.Get("session"), scope)
@@ -81,4 +84,9 @@ func staleDuration(v string, defaultDays int) time.Duration {
 		}
 	}
 	return time.Duration(days) * 24 * time.Hour
+}
+
+// isTruthy reports whether an opt-in config value is enabled. Empty/unset is off.
+func isTruthy(v string) bool {
+	return v == "true" || v == "1" || v == "on"
 }

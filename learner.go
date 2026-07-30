@@ -3,9 +3,11 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -122,6 +124,14 @@ type Learner struct {
 	lastActivity time.Time
 	mu           sync.Mutex
 	stampMu      sync.Mutex
+
+	// rawArchive enables the G7 raw-session archival tier: when true, every
+	// Observe best-effort records one verbatim KindTranscript node per turn. Off
+	// by default (append-heavy); set via SetRawArchive. rawSeq is the per-Learner
+	// monotonic turn counter for the raw node key; it advances under stampMu
+	// alongside n, never on the consolidation mu.
+	rawArchive bool
+	rawSeq     int
 }
 
 var _ contracts.Orchestrator = (*Learner)(nil)
@@ -138,6 +148,13 @@ func NewLearner(mem contracts.Memory, session string, scope contracts.MemoryScop
 func (l *Learner) SetIdle(sinceLastRunDays, idleHours int) {
 	l.idleDays = sinceLastRunDays
 	l.idleHours = idleHours
+}
+
+// SetRawArchive toggles the G7 raw-session archival tier. When true, Observe
+// records one untruncated KindTranscript node per turn (best-effort, never
+// blocking the turn). Off by default. The host wires this from MEMORY_RAW_ARCHIVE.
+func (l *Learner) SetRawArchive(on bool) {
+	l.rawArchive = on
 }
 
 // DueForIdleRun reports whether an inactivity-triggered Consolidate should fire,
@@ -238,11 +255,37 @@ func (l *Learner) Observe(ctx context.Context, p contracts.Prompt, reply string)
 		l.n++
 		due = l.n%l.every == 0
 	}
+	var rawSeq int
+	if l.rawArchive {
+		l.rawSeq++
+		rawSeq = l.rawSeq
+	}
 	l.stampMu.Unlock()
+	if rawSeq > 0 {
+		l.recordRaw(ctx, p, reply, rawSeq) // best-effort; never breaks the turn
+	}
 	if due {
 		_ = l.Consolidate(ctx)
 	}
 	return err
+}
+
+// recordRaw writes one verbatim raw-transcript node for the turn (G7). It is
+// best-effort: any error is discarded so archival never breaks the turn loop
+// (invariant 2). The Body is the full untruncated prompt+reply — the obsidian
+// per-node budget is bypassed for KindTranscript, so nothing is lost. Keyed
+// raw/<sessionTail>/<seq> (append-only, monotonic; never re-recorded).
+func (l *Learner) recordRaw(ctx context.Context, p contracts.Prompt, reply string, seq int) {
+	if l.mem == nil {
+		return
+	}
+	tail := strings.TrimPrefix(l.session, "sessions/")
+	_ = l.mem.Record(ctx, contracts.Node{
+		Key:   fmt.Sprintf("raw/%s/%d", tail, seq),
+		Kind:  contracts.KindTranscript,
+		Title: fmt.Sprintf("turn %d", seq),
+		Body:  fmt.Sprintf("%s: %s\n\nassistant: %s", p.Author, p.Content, reply),
+	})
 }
 
 // Consolidate runs the extractor over the journal + transcript and persists each
