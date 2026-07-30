@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -92,6 +93,19 @@ type Learner struct {
 	// an unconfigured host still gets a report.
 	reportEnabled bool
 	reportPrefix  string
+
+	// idleDays/idleHours configure the G5 inactivity trigger (SetIdle).
+	// idleDays <= 0 disables the trigger entirely (opt-in, default off).
+	idleDays  int
+	idleHours int
+	// lastRun is stamped at the top of every Consolidate (zero = never run);
+	// lastActivity is stamped at the top of every Observe. Both are guarded by
+	// mu, which also serialises the whole Consolidate body so a turn-path call
+	// and the idle-loop call never interleave (Go mutexes are not reentrant, so
+	// the public Consolidate locks and delegates to consolidateLocked).
+	lastRun      time.Time
+	lastActivity time.Time
+	mu           sync.Mutex
 }
 
 var _ contracts.Orchestrator = (*Learner)(nil)
@@ -100,6 +114,37 @@ var _ contracts.Orchestrator = (*Learner)(nil)
 // exactly like the default Curator (Consolidate is a no-op).
 func NewLearner(mem contracts.Memory, session string, scope contracts.MemoryScope, ex Extractor, journal string, every int) *Learner {
 	return &Learner{Curator: NewScoped(mem, session, scope), extract: ex, journal: journal, every: every, seen: map[string]bool{}}
+}
+
+// SetIdle configures the G5 inactivity trigger. sinceLastRunDays <= 0 disables
+// it (opt-in, default off); idleHours is the quiet-period threshold measured
+// against lastActivity. Mirrors SetStaleness/SetMerge's setter shape.
+func (l *Learner) SetIdle(sinceLastRunDays, idleHours int) {
+	l.idleDays = sinceLastRunDays
+	l.idleHours = idleHours
+}
+
+// DueForIdleRun reports whether an inactivity-triggered Consolidate should fire,
+// given the current time and the timestamp of the last observed activity. It is
+// pure: it reads now as an explicit parameter (not l.now()), so it is unit-
+// testable with fixed times and needs no real timers. Mirrors Hermes:
+// (now-lastRun >= idleDays) AND (now-lastActivity >= idleHours), both inclusive.
+// It returns false when the trigger is disabled (idleDays <= 0), when lastRun is
+// zero (never consolidated: no baseline yet), or when either threshold is unmet.
+func (l *Learner) DueForIdleRun(now, lastActivity time.Time) bool {
+	if l.idleDays <= 0 {
+		return false
+	}
+	if l.lastRun.IsZero() {
+		return false
+	}
+	if now.Sub(l.lastRun) < time.Duration(l.idleDays)*24*time.Hour {
+		return false
+	}
+	if now.Sub(lastActivity) < time.Duration(l.idleHours)*time.Hour {
+		return false
+	}
+	return true
 }
 
 // Observe records the turn (default behaviour) and, every `every` turns, fires a
