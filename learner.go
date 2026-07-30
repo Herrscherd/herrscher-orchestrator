@@ -97,6 +97,10 @@ func (l *Learner) Consolidate(ctx context.Context) error {
 		}
 		l.seen[c.Node.Key] = true
 	}
+	// Best-effort staleness sweep at the end of a consolidation pass. A sweep
+	// error must never propagate out of Consolidate (invariant: learning never
+	// breaks a turn).
+	_ = l.Sweep(ctx)
 	return nil
 }
 
