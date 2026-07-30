@@ -2,8 +2,11 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"io"
+	"log/slog"
 	"os"
+	"unicode/utf8"
 
 	"github.com/Herrscherd/herrscher-contracts"
 )
@@ -25,6 +28,21 @@ type Extractor interface {
 	Extract(ctx context.Context, journal, transcript string) ([]Candidate, error)
 }
 
+// Consolidator shrinks an over-budget memory candidate so a refused Record can be
+// retried instead of dropped (memory roadmap G1). The merge/summarise heuristics
+// are the closed part of the moat; this package defines only the seam and the
+// open plumbing (Learner) that drives it. The returned node's Body SHOULD fit the
+// given rune limit; the Learner re-checks and, if it still does not, holds the
+// candidate for a later pass.
+type Consolidator interface {
+	Consolidate(ctx context.Context, over contracts.Node, limit int) (contracts.Node, error)
+}
+
+// errEnqueue signals that a candidate was refused for budget and could not be
+// resolved this pass; the caller holds it on the pending queue. It never escapes
+// Consolidate.
+var errEnqueue = errors.New("orchestrator: candidate over budget, queued for retry")
+
 // Learner is the richer Orchestrator that adds the learning loop on top of the
 // default Curator: it keeps the same per-turn Context/Observe behaviour and
 // implements a real Consolidate that runs an Extractor over the journal +
@@ -43,6 +61,12 @@ type Learner struct {
 	// Consolidate over the same journal does not re-link duplicate facts/skills
 	// every turn. Nodes upsert by Key anyway; this also guards the link writes.
 	seen map[string]bool
+	// pending holds candidates refused for the per-node budget that could not be
+	// consolidated to fit this pass. It is drained at the top of each Consolidate
+	// (a consolidator may now be wired, or the budget may have changed) and is
+	// in-memory only — the raw journal on disk remains the durable source, so a
+	// chronically-unmergeable fact is simply retried for the life of the session.
+	pending []Candidate
 }
 
 var _ contracts.Orchestrator = (*Learner)(nil)
@@ -73,6 +97,11 @@ func (l *Learner) Consolidate(ctx context.Context) error {
 	if l.extract == nil || l.mem == nil {
 		return nil
 	}
+	var firstErr error
+	// Drain candidates a prior pass refused for budget before taking new ones: a
+	// consolidator may now be wired, or the budget may have changed.
+	l.drain(ctx, &firstErr)
+
 	journal := l.readJournalTail() // best-effort: missing file / no new bytes → ""
 	var transcript string
 	if sg, err := l.mem.Recall(ctx, l.session, 0); err == nil {
@@ -82,30 +111,115 @@ func (l *Learner) Consolidate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var firstErr error
 	for _, c := range cands {
 		if l.seen[c.Node.Key] {
 			continue // already persisted this session — keep Consolidate idempotent
 		}
-		var err error
-		if c.Private {
-			err = contracts.RecordPrivate(ctx, l.mem, l.scope, c.Node)
-		} else {
-			err = contracts.RecordShared(ctx, l.mem, l.scope, c.Node)
-		}
-		if err != nil {
+		switch perr := l.persist(ctx, c); {
+		case perr == nil:
+			l.seen[c.Node.Key] = true
+		case errors.Is(perr, errEnqueue):
+			l.enqueue(c)
+		default:
 			if firstErr == nil {
-				firstErr = err // record the first failure and keep going: one bad
+				firstErr = perr // record the first failure and keep going: one bad
 			} // candidate must not drop its siblings or skip the sweep below
-			continue
 		}
-		l.seen[c.Node.Key] = true
 	}
 	// Best-effort staleness sweep at the end of a consolidation pass. A sweep
 	// error must never propagate out of Consolidate (invariant: learning never
 	// breaks a turn).
 	_ = l.Sweep(ctx)
 	return firstErr
+}
+
+// consolidator returns the Consolidator the extractor also implements, if any.
+// The closed extractor typically implements both seams, so forced consolidation
+// needs no new constructor parameter.
+func (l *Learner) consolidator() (Consolidator, bool) {
+	c, ok := l.extract.(Consolidator)
+	return c, ok
+}
+
+// record writes one candidate under the scope chosen by c.Private.
+func (l *Learner) record(ctx context.Context, c Candidate) error {
+	if c.Private {
+		return contracts.RecordPrivate(ctx, l.mem, l.scope, c.Node)
+	}
+	return contracts.RecordShared(ctx, l.mem, l.scope, c.Node)
+}
+
+// persist records one candidate, responding to a per-node budget refusal
+// (*contracts.BudgetError) by asking the Consolidator, if wired, to shrink the
+// node to the refusal's Limit and retrying the write once. Returns nil on
+// success, errEnqueue when a budget refusal is unresolved this pass (caller
+// queues), or the underlying error for a non-budget failure (caller records it
+// and keeps going).
+func (l *Learner) persist(ctx context.Context, c Candidate) error {
+	err := l.record(ctx, c)
+	if err == nil {
+		return nil
+	}
+	var be *contracts.BudgetError
+	if !errors.As(err, &be) {
+		return err // non-budget failure: caller keeps going
+	}
+	cons, ok := l.consolidator()
+	if !ok {
+		slog.Warn("memory: candidate over budget and no consolidator; queued for retry",
+			"key", c.Node.Key, "runes", be.Runes, "limit", be.Limit)
+		return errEnqueue
+	}
+	merged, cerr := cons.Consolidate(ctx, c.Node, be.Limit)
+	if cerr != nil || utf8.RuneCountInString(merged.Body) > be.Limit {
+		slog.Warn("memory: consolidation did not bring candidate within budget; queued for retry",
+			"key", c.Node.Key, "runes", be.Runes, "limit", be.Limit, "err", cerr)
+		return errEnqueue
+	}
+	c.Node = merged
+	rerr := l.record(ctx, c)
+	if rerr == nil {
+		return nil
+	}
+	if errors.As(rerr, &be) {
+		// Still refused after shrinking — hold it rather than loop.
+		slog.Warn("memory: consolidated candidate still over budget; queued for retry",
+			"key", c.Node.Key, "runes", be.Runes, "limit", be.Limit)
+		return errEnqueue
+	}
+	return rerr // a non-budget failure on retry surfaces as a first-error
+}
+
+// enqueue holds a budget-refused candidate for a later pass, deduped by node key
+// so a chronically-unmergeable fact cannot grow the queue unbounded.
+func (l *Learner) enqueue(c Candidate) {
+	for _, p := range l.pending {
+		if p.Node.Key == c.Node.Key {
+			return
+		}
+	}
+	l.pending = append(l.pending, c)
+}
+
+// drain re-attempts each pending candidate through persist, returning those still
+// refused. A now-successful candidate is marked seen; a non-budget failure is
+// recorded in *firstErr and the candidate dropped (it re-extracts from the
+// journal if still relevant).
+func (l *Learner) drain(ctx context.Context, firstErr *error) {
+	var still []Candidate
+	for _, c := range l.pending {
+		switch perr := l.persist(ctx, c); {
+		case perr == nil:
+			l.seen[c.Node.Key] = true
+		case errors.Is(perr, errEnqueue):
+			still = append(still, c)
+		default:
+			if *firstErr == nil {
+				*firstErr = perr
+			}
+		}
+	}
+	l.pending = still
 }
 
 // readJournalTail returns the journal bytes appended since the last Consolidate,
