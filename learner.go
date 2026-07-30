@@ -56,9 +56,12 @@ var idlePollInterval = 10 * time.Minute
 // implements a real Consolidate that runs an Extractor over the journal +
 // transcript and persists facts (shared) and skills (private) via the P1 scope.
 //
-// A Learner is single-goroutine per session: Consolidate runs synchronously from
-// Observe on the turn path, so pending/seen/offset are intentionally not
-// mutex-guarded.
+// The G5 idle loop adds a second Consolidate trigger on its own goroutine, so a
+// turn-path Consolidate and an idle one can now race. mu serialises the whole
+// Consolidate body (they never interleave), which is also why pending/seen/offset
+// — touched only inside that mu-guarded body — need no separate guard. The
+// activity clock (lastActivity/lastRun/n), read/written off the consolidation
+// body, is guarded by the lighter stampMu instead (see the field comments).
 type Learner struct {
 	*Curator
 	extract Extractor
