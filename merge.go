@@ -124,6 +124,9 @@ func (l *Learner) Merge(ctx context.Context) error {
 // "all" = anything not archived; "active" = active/absent-state only; "stale"
 // (default) = stale only.
 func (l *Learner) mergeEligible(n contracts.Node) bool {
+	if n.Meta[MetaPromotedTo] != "" {
+		return false // a promoted original is settled: never re-fuse it with its shared copy
+	}
 	state := n.Meta[contracts.MetaState]
 	if state == "" {
 		state = contracts.StateActive

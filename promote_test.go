@@ -248,3 +248,61 @@ func TestPromoteBestEffortOnRecordError(t *testing.T) {
 		t.Fatal("sibling promotion was skipped after the first node's failure")
 	}
 }
+
+// orderMem records the order of key-writes so we can assert the pass
+// ordering Sweep -> Merge -> Promote.
+type orderMem struct {
+	mergeMem
+	order []string
+}
+
+func (m *orderMem) Record(ctx context.Context, n contracts.Node) error {
+	m.order = append(m.order, n.Key)
+	return m.mergeMem.Record(ctx, n)
+}
+
+func TestConsolidateRunsPromoteAfterMerge(t *testing.T) {
+	// A single eligible private node; with a nil extractor Extract yields nothing,
+	// but Sweep/Merge/Promote still run at the Consolidate tail. Promote must fire
+	// and produce the shared copy.
+	mem := &mergeMem{nodes: []contracts.Node{promoNode("agents/a/skills/x", contracts.StateActive, 20)}}
+	l := promoteLearner(mem, 10)
+	// Pin the clock to the node's own age window: promoNode anchors its
+	// capturedAt/lastSeen stamps at a fixed 2026-01-01 date, but Sweep (which runs
+	// before Promote in Consolidate) measures staleness against the wall clock by
+	// default. Without pinning, a run on a real date far past that anchor would
+	// have Sweep archive the node before Promote ever sees it, making this test's
+	// pass/fail depend on the calendar date it happens to run on.
+	l.now = func() time.Time { return time.Date(2026, 1, 21, 0, 0, 0, 0, time.UTC) }
+	if err := l.Consolidate(context.Background()); err != nil {
+		t.Fatalf("Consolidate: %v", err)
+	}
+	var promoted bool
+	for _, r := range mem.records {
+		if r.Key == "projects/p/skills/x" {
+			promoted = true
+		}
+	}
+	if !promoted {
+		t.Fatal("Consolidate did not run Promote (no shared copy written)")
+	}
+}
+
+func TestMergeSkipsPromotedOriginal(t *testing.T) {
+	// A promoted original in a mergeable domain group must be excluded from merge
+	// candidacy so it is never re-fused with (or instead of) its shared copy.
+	a := stale("agents/a/skills/x", "http")
+	a.Meta[MetaPromotedTo] = "projects/p/skills/x"
+	b := stale("agents/a/skills/y", "http")
+	mem := &mergeMem{nodes: []contracts.Node{a, b}}
+	f := &fakeMerger{result: nil} // capture what it is handed
+	l := learnerWith(mem, f, 2, 40, "stale")
+	if err := l.Merge(context.Background()); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	// With the promoted original excluded, only 1 candidate remains in the group,
+	// which is below the min-2 threshold, so the merger is never called.
+	if len(f.calls) != 0 {
+		t.Fatalf("merger was called with a promoted original in the group: %+v", f.calls)
+	}
+}

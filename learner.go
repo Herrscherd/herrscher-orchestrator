@@ -166,6 +166,12 @@ func (l *Learner) Consolidate(ctx context.Context) error {
 	// when disabled or no Merger is wired). A merge error must never propagate
 	// out of Consolidate (invariant: learning never breaks a turn).
 	_ = l.Merge(ctx)
+	// Best-effort cross-agent promotion after the merge (opt-in via SetPromote;
+	// a no-op when disabled or when nothing is eligible). Promote must see the
+	// post-sweep, post-merge state so a freshly-archived merge original is never
+	// promoted. A promotion error must never propagate out of Consolidate
+	// (invariant: learning never breaks a turn).
+	_ = l.Promote(ctx)
 	// Best-effort audit report of this pass's transitions (opt-in via
 	// SetReport, default enabled; a no-op when disabled or when the pass made
 	// no transitions). A report error must never propagate out of Consolidate
