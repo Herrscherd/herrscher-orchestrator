@@ -155,9 +155,16 @@ func (l *Learner) applyUmbrella(ctx context.Context, u Umbrella, group []contrac
 	if err := l.mem.Record(ctx, u.Node); err != nil {
 		return err
 	}
+	// The umbrella is a brand-new node (validUmbrella rejects a key collision),
+	// so its prior state is unconditionally "none" -> it now exists active.
+	l.transitions = append(l.transitions, Transition{Key: u.Node.Key, From: "", To: contracts.StateActive, Kind: "merge"})
 	var firstErr error
 	for _, k := range u.Merged {
 		orig := byKey[k]
+		prevState := orig.Meta[contracts.MetaState]
+		if prevState == "" {
+			prevState = contracts.StateActive
+		}
 		if orig.Meta == nil {
 			orig.Meta = map[string]string{}
 		}
@@ -170,8 +177,9 @@ func (l *Learner) applyUmbrella(ctx context.Context, u Umbrella, group []contrac
 			if firstErr == nil {
 				firstErr = err
 			}
-			continue
+			continue // do not record a transition for a write that didn't land
 		}
+		l.transitions = append(l.transitions, Transition{Key: k, From: prevState, To: contracts.StateArchived, Kind: "merge"})
 		if err := l.mem.Links(ctx, k, u.Node.Key, "merged-into"); err != nil && firstErr == nil {
 			firstErr = err
 		}

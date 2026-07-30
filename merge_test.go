@@ -335,6 +335,60 @@ func TestMergeRejectsUmbrellaCollidingWithExistingNode(t *testing.T) {
 	}
 }
 
+func TestMergePopulatesTransitions(t *testing.T) {
+	a, b := stale("facts/a", "d"), stale("facts/b", "d")
+	mem := &mergeMem{nodes: []contracts.Node{a, b}}
+	f := &fakeMerger{result: []Umbrella{{
+		Node:   contracts.Node{Key: "facts/umbrella", Body: "fused"},
+		Merged: []string{"facts/a", "facts/b"},
+	}}}
+	l := learnerWith(mem, f, 2, 40, "stale")
+	if err := l.Merge(context.Background()); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if len(l.transitions) != 3 {
+		t.Fatalf("transitions = %d, want 3 (1 umbrella + 2 originals): %+v", len(l.transitions), l.transitions)
+	}
+	var sawUmbrella, sawA, sawB bool
+	for _, tr := range l.transitions {
+		if tr.Kind != "merge" {
+			t.Errorf("transition kind = %q, want merge", tr.Kind)
+		}
+		switch tr.Key {
+		case "facts/umbrella":
+			sawUmbrella = tr.From == "" && tr.To == contracts.StateActive
+		case "facts/a":
+			sawA = tr.From == contracts.StateStale && tr.To == contracts.StateArchived
+		case "facts/b":
+			sawB = tr.From == contracts.StateStale && tr.To == contracts.StateArchived
+		}
+	}
+	if !sawUmbrella || !sawA || !sawB {
+		t.Fatalf("missing expected transition(s): umbrella=%v a=%v b=%v (%+v)", sawUmbrella, sawA, sawB, l.transitions)
+	}
+}
+
+func TestMergeTransitionSkippedOnOriginalRecordError(t *testing.T) {
+	mem := &mergeMem{
+		nodes:    []contracts.Node{stale("facts/a", "d"), stale("facts/b", "d")},
+		recErrOn: "facts/a", // archiving facts/a fails
+	}
+	f := &fakeMerger{result: []Umbrella{{
+		Node:   contracts.Node{Key: "facts/u", Body: "fused"},
+		Merged: []string{"facts/a", "facts/b"},
+	}}}
+	l := learnerWith(mem, f, 2, 40, "stale")
+	_ = l.Merge(context.Background()) // error surfaced, but the sibling still applies
+	for _, tr := range l.transitions {
+		if tr.Key == "facts/a" {
+			t.Fatalf("facts/a must not produce a transition: its archive Record failed")
+		}
+	}
+	if len(l.transitions) != 2 {
+		t.Fatalf("transitions = %d, want 2 (umbrella + facts/b): %+v", len(l.transitions), l.transitions)
+	}
+}
+
 func TestConsolidateRunsMerge(t *testing.T) {
 	// End-to-end: Consolidate must invoke the merge pass after the sweep.
 	mem := &mergeMem{nodes: []contracts.Node{stale("facts/a", "d"), stale("facts/b", "d")}}
