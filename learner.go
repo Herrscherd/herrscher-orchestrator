@@ -71,6 +71,13 @@ type Learner struct {
 	// in-memory only — the raw journal on disk remains the durable source, so a
 	// chronically-unmergeable fact is simply retried for the life of the session.
 	pending []Candidate
+
+	// mergeMin/mergeMax/mergeTarget configure the G2 semantic-merge pass
+	// (Learner.Merge). mergeMin <= 0 disables it (opt-in, default off); set via
+	// SetMerge. mergeTarget is one of "stale" (default) / "active" / "all".
+	mergeMin    int
+	mergeMax    int
+	mergeTarget string
 }
 
 var _ contracts.Orchestrator = (*Learner)(nil)
@@ -134,6 +141,10 @@ func (l *Learner) Consolidate(ctx context.Context) error {
 	// error must never propagate out of Consolidate (invariant: learning never
 	// breaks a turn).
 	_ = l.Sweep(ctx)
+	// Best-effort semantic merge after the sweep (opt-in via SetMerge; a no-op
+	// when disabled or no Merger is wired). A merge error must never propagate
+	// out of Consolidate (invariant: learning never breaks a turn).
+	_ = l.Merge(ctx)
 	return firstErr
 }
 
