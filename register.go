@@ -19,6 +19,8 @@ func init() {
 				{Key: "merge-min-nodes", Env: "MEMORY_MERGE_MIN", Help: "min nodes in a domain group before the merge pass folds them into an umbrella; <=0 disables (default 0, off)", Required: false},
 				{Key: "merge-target", Env: "MEMORY_MERGE_TARGET", Help: "which nodes the merge pass considers: stale | active | all (default stale)", Required: false},
 				{Key: "merge-max", Env: "MEMORY_MERGE_MAX", Help: "cap on nodes handed to the merger per domain group (default 40)", Required: false},
+				{Key: "report-enabled", Env: "MEMORY_REPORT_ENABLED", Help: "write a REPORT node at the end of a Consolidate pass that made >=1 transition; false/0/off disables (default true)", Required: false},
+				{Key: "report-prefix", Env: "MEMORY_REPORT_PREFIX", Help: "key prefix each report node is written under, a timestamp is appended (default reports/)", Required: false},
 			},
 		},
 		Orchestrator: func(ctx context.Context, cfg contracts.PluginConfig, mem contracts.Memory) (contracts.Orchestrator, error) {
@@ -46,6 +48,8 @@ func init() {
 				mergeMin, _ := strconv.Atoi(cfg.Get("merge-min-nodes"))
 				mergeMax, _ := strconv.Atoi(cfg.Get("merge-max"))
 				l.SetMerge(mergeMin, mergeMax, cfg.Get("merge-target"))
+				reportEnabled := cfg.Get("report-enabled") != "false" && cfg.Get("report-enabled") != "0" && cfg.Get("report-enabled") != "off"
+				l.SetReport(reportEnabled, cfg.Get("report-prefix"))
 				return l, nil
 			}
 			c := NewScoped(mem, cfg.Get("session"), scope)
