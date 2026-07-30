@@ -87,8 +87,16 @@ func (l *Learner) Merge(ctx context.Context) error {
 		}
 		groups[n.Meta["domain"]] = append(groups[n.Meta["domain"]], n)
 	}
+	// All live (non-archived) node keys, so an umbrella can be rejected if it
+	// would overwrite an existing node outside its candidate group (spec §4:
+	// an umbrella must be a NEW node). Archived keys are excluded by Search and
+	// are inherently unrepresented here.
+	existing := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		existing[n.Key] = true
+	}
 	var firstErr error
-	for _, group := range groups {
+	for domain, group := range groups {
 		if len(group) < l.mergeMin {
 			continue
 		}
@@ -97,13 +105,14 @@ func (l *Learner) Merge(ctx context.Context) error {
 		}
 		umbrellas, merr := m.Merge(ctx, group)
 		if merr != nil {
+			slog.Warn("memory: merge group failed", "domain", domain, "size", len(group), "err", merr)
 			if firstErr == nil {
 				firstErr = merr // record and keep going: one bad group must not
 			} // abort the others
 			continue
 		}
 		for _, u := range umbrellas {
-			if aerr := l.applyUmbrella(ctx, u, group); aerr != nil && firstErr == nil {
+			if aerr := l.applyUmbrella(ctx, u, group, existing); aerr != nil && firstErr == nil {
 				firstErr = aerr
 			}
 		}
@@ -135,12 +144,12 @@ func (l *Learner) mergeEligible(n contracts.Node) bool {
 // or drop valid proposals from the same batch. Per-original write failures are
 // best-effort (record first, continue) so one bad original never strands the
 // umbrella or its siblings.
-func (l *Learner) applyUmbrella(ctx context.Context, u Umbrella, group []contracts.Node) error {
+func (l *Learner) applyUmbrella(ctx context.Context, u Umbrella, group []contracts.Node, existing map[string]bool) error {
 	byKey := make(map[string]contracts.Node, len(group))
 	for _, n := range group {
 		byKey[n.Key] = n
 	}
-	if !l.validUmbrella(u, byKey) {
+	if !l.validUmbrella(u, byKey, existing) {
 		return nil // rejected (WARN already emitted)
 	}
 	if err := l.mem.Record(ctx, u.Node); err != nil {
@@ -174,7 +183,7 @@ func (l *Learner) applyUmbrella(ctx context.Context, u Umbrella, group []contrac
 // empty Key/Body, fewer than 2 merged originals, a Key that collides with a
 // candidate node (an umbrella must be a NEW node, never an original reused), or a
 // merged Key outside the candidate group.
-func (l *Learner) validUmbrella(u Umbrella, byKey map[string]contracts.Node) bool {
+func (l *Learner) validUmbrella(u Umbrella, byKey map[string]contracts.Node, existing map[string]bool) bool {
 	reason := ""
 	switch {
 	case u.Node.Key == "":
@@ -185,8 +194,8 @@ func (l *Learner) validUmbrella(u Umbrella, byKey map[string]contracts.Node) boo
 		reason = "fewer than 2 originals"
 	}
 	if reason == "" {
-		if _, collides := byKey[u.Node.Key]; collides {
-			reason = "umbrella key reuses a candidate node"
+		if existing[u.Node.Key] {
+			reason = "umbrella key collides with an existing node" // must be a NEW node
 		}
 	}
 	if reason == "" {

@@ -313,3 +313,37 @@ func TestSetMergeDefaults(t *testing.T) {
 		t.Errorf("SetMerge did not apply valid values: min=%d max=%d target=%q", l.mergeMin, l.mergeMax, l.mergeTarget)
 	}
 }
+
+func TestMergeRejectsUmbrellaCollidingWithExistingNode(t *testing.T) {
+	// An active node in another domain is NOT in the stale candidate group, but
+	// an umbrella keyed to it must still be rejected (would overwrite it).
+	other := stale("other", "d2")
+	other.Meta[contracts.MetaState] = contracts.StateActive
+	mem := &mergeMem{nodes: []contracts.Node{stale("facts/a", "d"), stale("facts/b", "d"), other}}
+	f := &fakeMerger{result: []Umbrella{{
+		Node:   contracts.Node{Key: "other", Body: "fused"},
+		Merged: []string{"facts/a", "facts/b"},
+	}}}
+	l := learnerWith(mem, f, 2, 40, "stale")
+	if err := l.Merge(context.Background()); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	for _, r := range mem.records {
+		if r.Key == "other" && r.Body == "fused" {
+			t.Fatal("umbrella overwrote an existing out-of-group node")
+		}
+	}
+}
+
+func TestConsolidateRunsMerge(t *testing.T) {
+	// End-to-end: Consolidate must invoke the merge pass after the sweep.
+	mem := &mergeMem{nodes: []contracts.Node{stale("facts/a", "d"), stale("facts/b", "d")}}
+	f := &fakeMerger{}
+	l := learnerWith(mem, f, 2, 40, "stale")
+	if err := l.Consolidate(context.Background()); err != nil {
+		t.Fatalf("Consolidate: %v", err)
+	}
+	if len(f.calls) != 1 {
+		t.Fatalf("Consolidate did not invoke Merge exactly once; merger calls=%d", len(f.calls))
+	}
+}
