@@ -78,6 +78,13 @@ type Learner struct {
 	mergeMin    int
 	mergeMax    int
 	mergeTarget string
+
+	// reportEnabled/reportPrefix configure the G4 audit-report pass
+	// (Learner.report). Both are set via SetReport; register.go always calls
+	// it (default enabled=true, prefix="reports/" — see the config table), so
+	// an unconfigured host still gets a report.
+	reportEnabled bool
+	reportPrefix  string
 }
 
 var _ contracts.Orchestrator = (*Learner)(nil)
@@ -145,6 +152,14 @@ func (l *Learner) Consolidate(ctx context.Context) error {
 	// when disabled or no Merger is wired). A merge error must never propagate
 	// out of Consolidate (invariant: learning never breaks a turn).
 	_ = l.Merge(ctx)
+	// Best-effort audit report of this pass's transitions (opt-in via
+	// SetReport, default enabled; a no-op when disabled or when the pass made
+	// no transitions). A report error must never propagate out of Consolidate
+	// (invariant: learning never breaks a turn).
+	_ = l.report(ctx)
+	// Reset the pass-scoped audit trail regardless of write outcome, so the
+	// next pass never re-reports this pass's transitions.
+	l.transitions = nil
 	return firstErr
 }
 
