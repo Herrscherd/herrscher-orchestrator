@@ -51,6 +51,30 @@ func TestReportWrittenWithRightShape(t *testing.T) {
 	}
 }
 
+func TestReportKeysDistinctWithinSameSecond(t *testing.T) {
+	// Two passes whose clock lands in the same wall-clock second must still
+	// produce distinct report keys — otherwise Record upserts by key and the
+	// second report silently overwrites the first, breaking append-only.
+	mem := &mergeMem{}
+	l := NewLearner(mem, "s", contracts.MemoryScope{}, plainExt{}, "", 0)
+	l.SetReport(true, "reports/")
+	base := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	for i, ns := range []int{100, 500} {
+		at := base.Add(time.Duration(ns))
+		l.now = func() time.Time { return at }
+		l.transitions = []Transition{{Key: "facts/a", From: contracts.StateActive, To: contracts.StateStale, Kind: "sweep"}}
+		if err := l.report(context.Background()); err != nil {
+			t.Fatalf("report %d: %v", i, err)
+		}
+	}
+	if len(mem.records) != 2 {
+		t.Fatalf("want 2 distinct report records, got %d (same-second collision overwrote one)", len(mem.records))
+	}
+	if mem.records[0].Key == mem.records[1].Key {
+		t.Fatalf("report keys collided within the same second: %q", mem.records[0].Key)
+	}
+}
+
 func TestReportDisabledNoWrite(t *testing.T) {
 	mem := &mergeMem{}
 	l := NewLearner(mem, "s", contracts.MemoryScope{}, plainExt{}, "", 0)

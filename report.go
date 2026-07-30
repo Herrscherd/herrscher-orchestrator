@@ -45,8 +45,14 @@ func (l *Learner) report(ctx context.Context) error {
 	}
 	now := l.now().UTC()
 	stamp := now.Format(time.RFC3339)
+	// The key uses nanosecond precision so two passes landing in the same
+	// wall-clock second (e.g. under forced back-to-back consolidation) still
+	// get distinct keys — Record upserts by key, so a second-precision
+	// collision would silently overwrite the earlier report and break the
+	// append-only guarantee. The human-facing stamp stays second-precision.
+	key := l.reportPrefix + now.Format(time.RFC3339Nano)
 	return l.mem.Record(ctx, contracts.Node{
-		Key:   l.reportPrefix + stamp,
+		Key:   key,
 		Kind:  ReportKind,
 		Title: "consolidate report " + stamp,
 		Body:  renderReport(stamp, l.transitions),
