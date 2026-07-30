@@ -48,6 +48,30 @@ func TestManifestHasPromoteSetting(t *testing.T) {
 	}
 }
 
+func TestManifestHasIdleSettings(t *testing.T) {
+	want := map[string]string{
+		"idle-days":  "MEMORY_IDLE_DAYS",
+		"idle-hours": "MEMORY_IDLE_HOURS",
+	}
+	found := map[string]string{}
+	for _, p := range contracts.Default.Orchestrators() {
+		if p.Manifest.Category != contracts.CategoryOrchestrator {
+			continue
+		}
+		for i := range p.Manifest.Config {
+			s := p.Manifest.Config[i]
+			if _, ok := want[s.Key]; ok {
+				found[s.Key] = s.Env
+			}
+		}
+	}
+	for key, env := range want {
+		if found[key] != env {
+			t.Errorf("manifest setting %q: env=%q, want %q", key, found[key], env)
+		}
+	}
+}
+
 func TestOrchestratorFactoryWiresStaleness(t *testing.T) {
 	var plugin contracts.Plugin
 	for _, p := range contracts.Default.Orchestrators() {

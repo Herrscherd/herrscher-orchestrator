@@ -22,6 +22,8 @@ func init() {
 				{Key: "report-enabled", Env: "MEMORY_REPORT_ENABLED", Help: "write a REPORT node at the end of a Consolidate pass that made >=1 transition; false/0/off disables (default true)", Required: false},
 				{Key: "report-prefix", Env: "MEMORY_REPORT_PREFIX", Help: "key prefix each report node is written under, a timestamp is appended (default reports/)", Required: false},
 				{Key: "promote-min-age-days", Env: "MEMORY_PROMOTE_MIN_AGE_DAYS", Help: "days a private node's lastSeen must exceed its capturedAt before the curator promotes it to the shared project scope; <=0 disables (default 0, off)", Required: false},
+				{Key: "idle-days", Env: "MEMORY_IDLE_DAYS", Help: "days since the last Consolidate run before the G5 inactivity trigger may fire; <=0 disables G5 (default 0, off)", Required: false},
+				{Key: "idle-hours", Env: "MEMORY_IDLE_HOURS", Help: "hours of quiet (no observed turn) required, once idle-days has elapsed, before the idle trigger fires; only consulted when idle-days > 0 (default 2)", Required: false},
 			},
 		},
 		Orchestrator: func(ctx context.Context, cfg contracts.PluginConfig, mem contracts.Memory) (contracts.Orchestrator, error) {
@@ -53,6 +55,12 @@ func init() {
 				l.SetReport(reportEnabled, cfg.Get("report-prefix"))
 				promoteDays, _ := strconv.Atoi(cfg.Get("promote-min-age-days"))
 				l.SetPromote(time.Duration(promoteDays) * 24 * time.Hour)
+				idleDays, _ := strconv.Atoi(cfg.Get("idle-days"))
+				idleHours := 2
+				if v, err := strconv.Atoi(cfg.Get("idle-hours")); err == nil {
+					idleHours = v
+				}
+				l.SetIdle(idleDays, idleHours)
 				return l, nil
 			}
 			c := NewScoped(mem, cfg.Get("session"), scope)
