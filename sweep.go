@@ -26,6 +26,7 @@ func (c *Curator) Sweep(ctx context.Context) error {
 		return err
 	}
 	now := c.now().UTC()
+	var firstErr error
 	for _, n := range nodes {
 		stamp := n.Meta[contracts.MetaLastSeen]
 		if stamp == "" {
@@ -54,9 +55,13 @@ func (c *Curator) Sweep(ctx context.Context) error {
 		if n.Meta[contracts.MetaLastSeen] == "" {
 			n.Meta[contracts.MetaLastSeen] = stamp
 		}
-		if err := c.mem.Record(ctx, n); err != nil {
-			return err
+		// Best-effort: a per-node write failure (e.g. a node that trips the
+		// obsidian budget) must not abort the rest of the sweep, or one bad
+		// node would freeze decay for every node after it, every pass. Record
+		// the first error and keep going; Consolidate swallows the return.
+		if err := c.mem.Record(ctx, n); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	return nil
+	return firstErr
 }

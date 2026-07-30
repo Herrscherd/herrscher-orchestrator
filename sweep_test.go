@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 type sweepFakeMem struct {
 	nodes  map[string]contracts.Node
 	writes int
+	failOn string // key whose Record returns an error (node is not stored)
 }
 
 func newSweepFakeMem() *sweepFakeMem { return &sweepFakeMem{nodes: map[string]contracts.Node{}} }
@@ -19,6 +21,9 @@ func (f *sweepFakeMem) Recall(ctx context.Context, key string, depth int) (contr
 	return contracts.Subgraph{Root: f.nodes[key]}, nil
 }
 func (f *sweepFakeMem) Record(ctx context.Context, n contracts.Node) error {
+	if n.Key == f.failOn {
+		return errors.New("record failed")
+	}
 	f.writes++
 	f.nodes[n.Key] = n
 	return nil
@@ -78,6 +83,25 @@ func TestSweepNoChurn(t *testing.T) {
 	}
 	if f.writes != 0 {
 		t.Fatalf("unchanged node rewritten: writes=%d", f.writes)
+	}
+}
+
+func TestSweepContinuesPastRecordError(t *testing.T) {
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	f := newSweepFakeMem()
+	seed(f, "bad", 45, now)      // would transition → stale, but its write fails
+	seed(f, "ancient", 200, now) // must still transition regardless of iteration order
+	f.failOn = "bad"
+
+	c := NewScoped(f, "s", contracts.MemoryScope{})
+	c.now = func() time.Time { return now }
+	err := c.Sweep(context.Background())
+	if err == nil {
+		t.Fatal("expected the failing node's error to be returned")
+	}
+	// A per-node failure must not abort the pass: "ancient" is still archived.
+	if got := f.nodes["ancient"].Meta[contracts.MetaState]; got != contracts.StateArchived {
+		t.Fatalf("node after the failing one was skipped: ancient state = %q", got)
 	}
 }
 
