@@ -335,6 +335,45 @@ func TestMergeRejectsUmbrellaCollidingWithExistingNode(t *testing.T) {
 	}
 }
 
+func TestMergeRejectsDuplicateUmbrellaKeyInSamePass(t *testing.T) {
+	// Two umbrella proposals in one pass sharing a key: the first applies, the
+	// second must be rejected by the collision check — otherwise the second
+	// Record silently overwrites the first umbrella and both append a merge
+	// transition. The just-written key must be treated as an existing node.
+	mem := &mergeMem{nodes: []contracts.Node{
+		stale("facts/a", "d"), stale("facts/b", "d"),
+		stale("facts/c", "d"), stale("facts/d", "d"),
+	}}
+	f := &fakeMerger{result: []Umbrella{
+		{Node: contracts.Node{Key: "facts/dup", Body: "first"}, Merged: []string{"facts/a", "facts/b"}},
+		{Node: contracts.Node{Key: "facts/dup", Body: "second"}, Merged: []string{"facts/c", "facts/d"}},
+	}}
+	l := learnerWith(mem, f, 2, 40, "stale")
+	if err := l.Merge(context.Background()); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	var dupWrites, dupUmbrellaTransitions int
+	for _, r := range mem.records {
+		if r.Key == "facts/dup" {
+			dupWrites++
+			if r.Body == "second" {
+				t.Fatal("second umbrella overwrote the first under a shared key")
+			}
+		}
+	}
+	if dupWrites != 1 {
+		t.Fatalf("umbrella key written %d times, want exactly 1", dupWrites)
+	}
+	for _, tr := range l.transitions {
+		if tr.Key == "facts/dup" {
+			dupUmbrellaTransitions++
+		}
+	}
+	if dupUmbrellaTransitions != 1 {
+		t.Fatalf("umbrella key produced %d transitions, want 1", dupUmbrellaTransitions)
+	}
+}
+
 func TestMergePopulatesTransitions(t *testing.T) {
 	a, b := stale("facts/a", "d"), stale("facts/b", "d")
 	mem := &mergeMem{nodes: []contracts.Node{a, b}}

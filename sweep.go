@@ -31,6 +31,12 @@ func (c *Curator) Sweep(ctx context.Context) error {
 		if n.Meta[MetaMergedInto] != "" {
 			continue // merged originals are terminal; never reactivate a folded fragment
 		}
+		if n.Kind == ReportKind {
+			continue // audit reports are artifacts, not lifecycle-managed memory:
+			// aging them would append a sweep transition, which report() would
+			// then write as a fresh report — a self-feeding loop that never
+			// quiesces and grows the swept set without bound.
+		}
 		stamp := n.Meta[contracts.MetaLastSeen]
 		if stamp == "" {
 			stamp = n.Meta["capturedAt"]

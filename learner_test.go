@@ -141,6 +141,23 @@ func TestNilExtractorMakesConsolidateNoOp(t *testing.T) {
 	}
 }
 
+// TestConsolidateResetsTransitionsOnEarlyReturn guards the deferred reset:
+// Restore appends transitions out of band between passes, and a nil-extractor
+// Learner's Consolidate returns early (before report). Without the deferred
+// reset those transitions would accumulate unbounded across passes. The defer
+// caps them on every return path.
+func TestConsolidateResetsTransitionsOnEarlyReturn(t *testing.T) {
+	mem := newRec()
+	l := NewLearner(mem, "alpha", contracts.MemoryScope{Project: "p"}, nil, "", 0)
+	l.transitions = []Transition{{Key: "facts/a", From: contracts.StateArchived, To: contracts.StateActive, Kind: "restore"}}
+	if err := l.Consolidate(context.Background()); err != nil {
+		t.Fatalf("nil extractor should no-op, got %v", err)
+	}
+	if l.transitions != nil {
+		t.Fatalf("early-return Consolidate did not reset transitions: %+v", l.transitions)
+	}
+}
+
 func TestConsolidateContinuesPastRecordError(t *testing.T) {
 	mem := newRec()
 	mem.failOn = "facts/eco" // the shared fact fails; the private skill must still persist

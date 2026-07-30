@@ -72,6 +72,28 @@ func TestSweepTransitions(t *testing.T) {
 	}
 }
 
+func TestSweepSkipsReportNodes(t *testing.T) {
+	// Audit reports are artifacts, not lifecycle-managed memory. Aging one would
+	// append a sweep transition, which report() would then persist as a fresh
+	// report — a self-feeding loop. An old report node must be left untouched.
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	f := newSweepFakeMem()
+	f.nodes["reports/old"] = contracts.Node{Key: "reports/old", Kind: ReportKind, Meta: map[string]string{
+		contracts.MetaLastSeen: now.Add(-200 * 24 * time.Hour).Format(time.RFC3339),
+	}}
+	c := NewScoped(f, "s", contracts.MemoryScope{})
+	c.now = func() time.Time { return now }
+	if err := c.Sweep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.nodes["reports/old"].Meta[contracts.MetaState]; got != "" {
+		t.Fatalf("report node was swept to %q, want left untouched", got)
+	}
+	if len(c.transitions) != 0 {
+		t.Fatalf("sweeping a report appended %d transitions, want 0", len(c.transitions))
+	}
+}
+
 func TestSweepNoChurn(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	f := newSweepFakeMem()

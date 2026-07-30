@@ -46,8 +46,12 @@ func TestRestoreHappyPath(t *testing.T) {
 		contracts.MetaLastSeen: "2020-01-01T00:00:00Z",
 	}}
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
-	if err := Restore(context.Background(), m, "facts/a", withClock(func() time.Time { return now })); err != nil {
+	prior, err := Restore(context.Background(), m, "facts/a", withClock(func() time.Time { return now }))
+	if err != nil {
 		t.Fatalf("Restore: %v", err)
+	}
+	if prior != contracts.StateArchived {
+		t.Errorf("prior = %q, want archived", prior)
 	}
 	got := m.nodes["facts/a"]
 	if got.Meta[contracts.MetaState] != contracts.StateActive {
@@ -65,7 +69,7 @@ func TestRestoreRefusesMergedOriginal(t *testing.T) {
 		contracts.MetaState:    contracts.StateArchived,
 		contracts.MetaLastSeen: "2020-01-01T00:00:00Z",
 	}}
-	err := Restore(context.Background(), m, "facts/a")
+	_, err := Restore(context.Background(), m, "facts/a")
 	if !errors.Is(err, ErrMergedOriginal) {
 		t.Fatalf("err = %v, want ErrMergedOriginal", err)
 	}
@@ -85,7 +89,7 @@ func TestRestoreWithForceDetaches(t *testing.T) {
 		contracts.MetaState:    contracts.StateArchived,
 		contracts.MetaLastSeen: "2020-01-01T00:00:00Z",
 	}}
-	if err := Restore(context.Background(), m, "facts/a", Force(true)); err != nil {
+	if _, err := Restore(context.Background(), m, "facts/a", Force(true)); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 	got := m.nodes["facts/a"]
@@ -99,7 +103,7 @@ func TestRestoreWithForceDetaches(t *testing.T) {
 
 func TestRestoreAbsentKeyErrors(t *testing.T) {
 	m := newRestoreMem()
-	if err := Restore(context.Background(), m, "nope"); err == nil {
+	if _, err := Restore(context.Background(), m, "nope"); err == nil {
 		t.Fatal("expected an error restoring an absent key")
 	}
 	if len(m.records) != 0 {
@@ -123,5 +127,26 @@ func TestLearnerRestoreAppendsTransition(t *testing.T) {
 	tr := l.transitions[0]
 	if tr.Key != "facts/a" || tr.Kind != "restore" || tr.To != contracts.StateActive {
 		t.Fatalf("unexpected transition: %+v", tr)
+	}
+	if tr.From != contracts.StateArchived {
+		t.Errorf("From = %q, want the node's real prior state archived", tr.From)
+	}
+}
+
+// TestLearnerRestoreRecordsRealPriorState proves the audit From is the node's
+// observed prior state, not a hardcoded "archived": restoring a merely-stale
+// node must record From=stale.
+func TestLearnerRestoreRecordsRealPriorState(t *testing.T) {
+	m := newRestoreMem()
+	m.nodes["facts/a"] = contracts.Node{Key: "facts/a", Meta: map[string]string{
+		contracts.MetaState:    contracts.StateStale,
+		contracts.MetaLastSeen: "2020-01-01T00:00:00Z",
+	}}
+	l := NewLearner(m, "s", contracts.MemoryScope{}, plainExt{}, "", 0)
+	if err := l.Restore(context.Background(), "facts/a"); err != nil {
+		t.Fatalf("Learner.Restore: %v", err)
+	}
+	if l.transitions[0].From != contracts.StateStale {
+		t.Errorf("From = %q, want stale", l.transitions[0].From)
 	}
 }

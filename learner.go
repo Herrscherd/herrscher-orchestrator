@@ -112,6 +112,13 @@ func (l *Learner) Observe(ctx context.Context, p contracts.Prompt, reply string)
 // candidate under the right scope. It is best-effort: a missing journal, a nil
 // extractor, or a nil Memory all yield a clean no-op.
 func (l *Learner) Consolidate(ctx context.Context) error {
+	// Reset the pass-scoped audit trail on every return path, so the next pass
+	// never re-reports this pass's transitions. A deferred reset also caps the
+	// out-of-band buffer: Learner.Restore appends transitions between passes, so
+	// a nil-extractor Learner (whose Consolidate returns early below) would
+	// otherwise accumulate them forever. report() runs before this fires and so
+	// still sees the full trail on the normal path.
+	defer func() { l.transitions = nil }()
 	if l.extract == nil || l.mem == nil {
 		return nil
 	}
@@ -157,9 +164,6 @@ func (l *Learner) Consolidate(ctx context.Context) error {
 	// no transitions). A report error must never propagate out of Consolidate
 	// (invariant: learning never breaks a turn).
 	_ = l.report(ctx)
-	// Reset the pass-scoped audit trail regardless of write outcome, so the
-	// next pass never re-reports this pass's transitions.
-	l.transitions = nil
 	return firstErr
 }
 

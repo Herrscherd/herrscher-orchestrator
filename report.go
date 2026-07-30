@@ -45,12 +45,16 @@ func (l *Learner) report(ctx context.Context) error {
 	}
 	now := l.now().UTC()
 	stamp := now.Format(time.RFC3339)
-	// The key uses nanosecond precision so two passes landing in the same
-	// wall-clock second (e.g. under forced back-to-back consolidation) still
-	// get distinct keys — Record upserts by key, so a second-precision
-	// collision would silently overwrite the earlier report and break the
-	// append-only guarantee. The human-facing stamp stays second-precision.
-	key := l.reportPrefix + now.Format(time.RFC3339Nano)
+	// The key uses a fixed-width, colon-free nanosecond stamp
+	// (20060102T150405.000000000Z). Nanosecond precision keeps two passes in
+	// the same wall-clock second (e.g. forced back-to-back consolidation)
+	// distinct, so Record — which upserts by key — never silently overwrites
+	// an earlier report and breaks the append-only guarantee. Colons are
+	// avoided because the key becomes an on-disk vault path in the obsidian
+	// backend, and ':' is illegal in filenames on some hosts; the fixed-width
+	// layout (no trailing-zero trimming, unlike RFC3339Nano) also keeps keys
+	// lexically sortable. The human-facing stamp stays RFC3339.
+	key := l.reportPrefix + now.Format("20060102T150405.000000000Z")
 	return l.mem.Record(ctx, contracts.Node{
 		Key:   key,
 		Kind:  ReportKind,

@@ -60,18 +60,26 @@ func withClock(clock func() time.Time) RestoreOption {
 // An error from Recall, including "not found", surfaces unchanged — restoring
 // an absent key is a real error (nothing to reactivate), unlike Deleter.Delete's
 // intentional idempotent-on-absent contract.
-func Restore(ctx context.Context, mem contracts.Memory, key string, opts ...RestoreOption) error {
+//
+// It returns the node's state immediately before the restore (its prior
+// Meta[MetaState], or StateActive when unset), so callers can record a faithful
+// audit "from" value; the returned prior is meaningful only when err is nil.
+func Restore(ctx context.Context, mem contracts.Memory, key string, opts ...RestoreOption) (prior string, err error) {
 	cfg := restoreConfig{clock: time.Now}
 	for _, o := range opts {
 		o(&cfg)
 	}
 	sg, err := mem.Recall(ctx, key, 0)
 	if err != nil {
-		return err
+		return "", err
 	}
 	n := sg.Root
 	if n.Meta[MetaMergedInto] != "" && !cfg.force {
-		return ErrMergedOriginal
+		return "", ErrMergedOriginal
+	}
+	prior = n.Meta[contracts.MetaState]
+	if prior == "" {
+		prior = contracts.StateActive
 	}
 	if n.Meta == nil {
 		n.Meta = map[string]string{}
@@ -81,18 +89,22 @@ func Restore(ctx context.Context, mem contracts.Memory, key string, opts ...Rest
 	if cfg.force {
 		delete(n.Meta, MetaMergedInto)
 	}
-	return mem.Record(ctx, n)
+	if err := mem.Record(ctx, n); err != nil {
+		return "", err
+	}
+	return prior, nil
 }
 
 // Restore reactivates key over l's Memory and, on success, appends a
 // Transition{Kind:"restore"} to the pass's audit trail — surfaced in the next
 // report if Consolidate runs before the field resets, or inspectable directly
 // via l.transitions since Restore is typically called out of band between
-// passes.
+// passes. The transition's From is the node's real prior state, not an
+// assumed "archived".
 func (l *Learner) Restore(ctx context.Context, key string, opts ...RestoreOption) error {
-	err := Restore(ctx, l.mem, key, opts...)
+	prior, err := Restore(ctx, l.mem, key, opts...)
 	if err == nil {
-		l.transitions = append(l.transitions, Transition{Key: key, From: contracts.StateArchived, To: contracts.StateActive, Kind: "restore"})
+		l.transitions = append(l.transitions, Transition{Key: key, From: prior, To: contracts.StateActive, Kind: "restore"})
 	}
 	return err
 }

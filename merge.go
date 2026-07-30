@@ -155,6 +155,12 @@ func (l *Learner) applyUmbrella(ctx context.Context, u Umbrella, group []contrac
 	if err := l.mem.Record(ctx, u.Node); err != nil {
 		return err
 	}
+	// Register the freshly-written umbrella as a live key so a second proposal
+	// in the same pass that reuses this key is rejected by validUmbrella's
+	// collision check — otherwise two umbrellas sharing a key would each append
+	// a merge transition and the second Record would silently overwrite the
+	// first.
+	existing[u.Node.Key] = true
 	// The umbrella is a brand-new node (validUmbrella rejects a key collision),
 	// so its prior state is unconditionally "none" -> it now exists active.
 	l.transitions = append(l.transitions, Transition{Key: u.Node.Key, From: "", To: contracts.StateActive, Kind: "merge"})

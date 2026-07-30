@@ -44,6 +44,11 @@ func TestReportWrittenWithRightShape(t *testing.T) {
 	if !strings.HasPrefix(r.Key, "reports/") {
 		t.Errorf("key %q does not start with the configured prefix", r.Key)
 	}
+	// The key becomes an on-disk vault path; ':' is illegal in filenames on
+	// some hosts, so the timestamp segment must be colon-free.
+	if strings.ContainsRune(strings.TrimPrefix(r.Key, "reports/"), ':') {
+		t.Errorf("key %q contains a colon; not filesystem-safe", r.Key)
+	}
 	for _, key := range []string{"facts/a", "facts/b"} {
 		if !strings.Contains(r.Body, key) {
 			t.Errorf("body missing transitioned key %q:\n%s", key, r.Body)
