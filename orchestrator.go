@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Herrscherd/herrscher-contracts"
 )
@@ -30,6 +31,10 @@ type Curator struct {
 	session string                // session node key
 	scope   contracts.MemoryScope // P1: shared project + private agent roots ({} = none)
 	pending []contracts.Node      // hits from the model's last <recall>, surfaced next Context
+
+	now          func() time.Time // injectable clock (defaults to time.Now); tests override
+	staleAfter   time.Duration    // age before a node is marked stale (<=0 disables)
+	archiveAfter time.Duration    // age before a node is archived (<=0 disables)
 }
 
 // New builds the default orchestrator for session over mem (mem may be nil),
@@ -41,7 +46,22 @@ func New(mem contracts.Memory, session string) *Curator {
 // NewScoped is New plus a MemoryScope (P1): Context also surfaces the shared
 // project memory and this agent's private skills via contracts.RecallScoped.
 func NewScoped(mem contracts.Memory, session string, scope contracts.MemoryScope) *Curator {
-	return &Curator{mem: mem, session: "sessions/" + session, scope: scope}
+	return &Curator{
+		mem:          mem,
+		session:      "sessions/" + session,
+		scope:        scope,
+		now:          time.Now,
+		staleAfter:   30 * 24 * time.Hour,
+		archiveAfter: 90 * 24 * time.Hour,
+	}
+}
+
+// SetStaleness configures the age windows used by Sweep. A window <= 0 disables
+// that transition (nodes never reach that state). The host wires this from
+// AGENT_STALE_DAYS / AGENT_ARCHIVE_DAYS in register.go.
+func (c *Curator) SetStaleness(staleAfter, archiveAfter time.Duration) {
+	c.staleAfter = staleAfter
+	c.archiveAfter = archiveAfter
 }
 
 var _ contracts.Orchestrator = (*Curator)(nil)
