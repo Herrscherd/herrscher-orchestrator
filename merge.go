@@ -180,9 +180,10 @@ func (l *Learner) applyUmbrella(ctx context.Context, u Umbrella, group []contrac
 }
 
 // validUmbrella rejects (WARN + false) an umbrella that would corrupt the graph:
-// empty Key/Body, fewer than 2 merged originals, a Key that collides with a
-// candidate node (an umbrella must be a NEW node, never an original reused), or a
-// merged Key outside the candidate group.
+// empty Key/Body, fewer than 2 merged originals, a Key that collides with any
+// existing live node — the `existing` set, which includes the merged originals —
+// (an umbrella must be a NEW node, never overwriting one), or a merged Key
+// outside the candidate group.
 func (l *Learner) validUmbrella(u Umbrella, byKey map[string]contracts.Node, existing map[string]bool) bool {
 	reason := ""
 	switch {
