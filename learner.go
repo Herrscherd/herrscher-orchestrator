@@ -105,13 +105,20 @@ type Learner struct {
 	idleDays  int
 	idleHours int
 	// lastRun is stamped at the top of every Consolidate (zero = never run);
-	// lastActivity is stamped at the top of every Observe. Both are guarded by
-	// mu, which also serialises the whole Consolidate body so a turn-path call
-	// and the idle-loop call never interleave (Go mutexes are not reentrant, so
-	// the public Consolidate locks and delegates to consolidateLocked).
+	// lastActivity is stamped at the top of every Observe. Both — and the turn
+	// counter n — are guarded by stampMu, a lightweight lock held only for the
+	// stamp/read itself, NEVER across a Consolidate. mu separately serialises the
+	// whole Consolidate body so a turn-path call and the idle-loop call never
+	// interleave (Go mutexes are not reentrant, so public Consolidate locks mu and
+	// delegates to consolidateLocked). Keeping the activity stamp off mu is
+	// invariant 2: a turn-path Observe must never block waiting for a slow
+	// background idle consolidation that holds mu. Lock order where both are held:
+	// mu → stampMu (only inside consolidateLocked); no path takes mu while holding
+	// stampMu, so the two can never deadlock.
 	lastRun      time.Time
 	lastActivity time.Time
 	mu           sync.Mutex
+	stampMu      sync.Mutex
 }
 
 var _ contracts.Orchestrator = (*Learner)(nil)
@@ -182,16 +189,24 @@ func (l *Learner) idleLoop(ctx context.Context) {
 }
 
 // idleTick evaluates the inactivity predicate and, if due, runs one Consolidate
-// out of band. It first reads lastActivity/lastRun under a brief Lock (always
-// safe to wait for). If due, it takes mu with TryLock — never Lock — so it never
-// blocks the turn path (invariant 2): on success it runs consolidateLocked while
-// holding the lock; on TryLock failure (a turn-path Consolidate holds the lock)
-// it skips this tick and retries at the next one. Extracted from idleLoop so
-// tests can drive it directly with a fake clock.
+// out of band. It first reads lastActivity/lastRun under stampMu — the same
+// lightweight lock Observe stamps under, never the consolidation mu, so this
+// evaluation cannot be delayed by an in-flight consolidation. If due, it takes
+// the consolidation mu with TryLock — never Lock — so it never blocks the turn
+// path (invariant 2): on success it runs consolidateLocked while holding the
+// lock; on TryLock failure (a turn-path Consolidate holds the lock) it skips this
+// tick and retries at the next one. Extracted from idleLoop so tests can drive it
+// directly with a fake clock.
+//
+// The predicate read and the TryLock are not atomic: a turn-path Observe may
+// stamp a fresh lastActivity in the gap, so an idle Consolidate can fire just as
+// activity resumes. This is harmless — Consolidate is best-effort and the next
+// tick re-evaluates against the fresh clock — so the gap is left unguarded rather
+// than widen the locking.
 func (l *Learner) idleTick(ctx context.Context) {
-	l.mu.Lock()
+	l.stampMu.Lock()
 	due := l.DueForIdleRun(l.now(), l.lastActivity)
-	l.mu.Unlock()
+	l.stampMu.Unlock()
 	if !due {
 		return
 	}
@@ -206,20 +221,21 @@ func (l *Learner) idleTick(ctx context.Context) {
 // (the G5 idle trigger's activity signal), and, every `every` turns, fires a
 // best-effort Consolidate out of band so learning never breaks the turn loop.
 //
-// mu is held only briefly — to stamp lastActivity and read/advance the turn
-// counter — and is RELEASED before calling l.Consolidate, which re-acquires it.
-// Holding mu across that call would double-lock (Go mutexes are not reentrant)
-// and deadlock.
+// The stamp and counter advance under stampMu — a lightweight lock, NOT the
+// consolidation mu — so a turn-path Observe never waits on a slow background idle
+// Consolidate holding mu (invariant 2). stampMu is released before the cadence
+// l.Consolidate call (which acquires mu), so the two locks are never held nested
+// here.
 func (l *Learner) Observe(ctx context.Context, p contracts.Prompt, reply string) error {
 	err := l.Curator.Observe(ctx, p, reply)
-	l.mu.Lock()
+	l.stampMu.Lock()
 	l.lastActivity = l.now()
 	var due bool
 	if l.every > 0 {
 		l.n++
 		due = l.n%l.every == 0
 	}
-	l.mu.Unlock()
+	l.stampMu.Unlock()
 	if due {
 		_ = l.Consolidate(ctx)
 	}
@@ -240,9 +256,13 @@ func (l *Learner) Consolidate(ctx context.Context) error {
 // consolidateLocked holds the full consolidation body. The caller MUST already
 // hold l.mu (public Consolidate acquires it; the idle loop acquires it via
 // TryLock). It stamps lastRun at the top so every trigger path — per-turn
-// cadence, idle, or a manual call — uniformly resets the inactivity clock.
+// cadence, idle, or a manual call — uniformly resets the inactivity clock. The
+// stamp itself takes stampMu briefly (lock order mu → stampMu) so DueForIdleRun,
+// which reads lastRun under stampMu, sees a consistent value.
 func (l *Learner) consolidateLocked(ctx context.Context) error {
+	l.stampMu.Lock()
 	l.lastRun = l.now()
+	l.stampMu.Unlock()
 	// Reset the pass-scoped audit trail on every return path, so the next pass
 	// never re-reports this pass's transitions. A deferred reset also caps the
 	// out-of-band buffer: Learner.Restore appends transitions between passes, so

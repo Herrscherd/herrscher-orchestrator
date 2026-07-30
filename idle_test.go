@@ -176,6 +176,48 @@ func TestConcurrentObserveAndConsolidate(t *testing.T) {
 	wg.Wait()
 }
 
+// blockExt is an Extractor whose Extract signals when it has entered (so a test
+// knows the consolidation body is holding mu) then blocks until released. It lets
+// a test pin the consolidation mutex for a deterministic window.
+type blockExt struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b blockExt) Extract(context.Context, string, string) ([]Candidate, error) {
+	close(b.entered)
+	<-b.release
+	return nil, nil
+}
+
+// TestObserveDoesNotBlockDuringIdleConsolidate is the invariant-2 liveness guard:
+// a turn-path Observe must never wait on a slow background Consolidate. It pins mu
+// inside a consolidation (blockExt held in Extract), then asserts Observe still
+// returns promptly. Observe stamps lastActivity under stampMu, not mu, so it does
+// not block; if the stamp ever moves back onto mu this test hangs past the
+// deadline and fails. This is a liveness property `-race` cannot catch.
+func TestObserveDoesNotBlockDuringIdleConsolidate(t *testing.T) {
+	ext := blockExt{entered: make(chan struct{}), release: make(chan struct{})}
+	l := NewLearner(&mergeMem{}, "s", contracts.MemoryScope{}, ext, "", 0) // every=0: Observe only stamps
+
+	go func() { _ = l.Consolidate(context.Background()) }() // acquires mu, blocks in Extract
+	<-ext.entered                                           // mu is now held for the whole consolidation
+
+	done := make(chan struct{})
+	go func() {
+		_ = l.Observe(context.Background(), contracts.Prompt{Author: "a", Content: "hi"}, "yo")
+		close(done)
+	}()
+
+	select {
+	case <-done: // Observe returned while mu is pinned → stamp is off mu, invariant 2 holds
+	case <-time.After(2 * time.Second):
+		close(ext.release) // unblock the goroutine before failing so the test tears down
+		t.Fatal("Observe blocked while an idle Consolidate held mu (invariant 2 violation)")
+	}
+	close(ext.release) // let the pinned Consolidate finish
+}
+
 // countExt is an Extractor that counts Extract calls — a proxy for "Consolidate
 // actually ran its body". Consolidate only calls Extract when both extract and
 // mem are non-nil, so pair it with a non-nil mergeMem.
