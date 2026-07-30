@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,13 +12,20 @@ import (
 
 // recMem records nodes and links so we can assert what the learner persisted.
 type recMem struct {
-	nodes map[string]contracts.Node
-	links [][3]string // {from, to, rel}
+	nodes  map[string]contracts.Node
+	links  [][3]string // {from, to, rel}
+	failOn string      // key whose Record returns an error (node not stored)
 }
 
 func newRec() *recMem { return &recMem{nodes: map[string]contracts.Node{}} }
 
-func (m *recMem) Record(_ context.Context, n contracts.Node) error { m.nodes[n.Key] = n; return nil }
+func (m *recMem) Record(_ context.Context, n contracts.Node) error {
+	if n.Key == m.failOn {
+		return errors.New("record failed")
+	}
+	m.nodes[n.Key] = n
+	return nil
+}
 func (m *recMem) Recall(_ context.Context, key string, _ int) (contracts.Subgraph, error) {
 	if n, ok := m.nodes[key]; ok {
 		return contracts.Subgraph{Root: n}, nil
@@ -130,6 +138,22 @@ func TestNilExtractorMakesConsolidateNoOp(t *testing.T) {
 	}
 	if len(mem.nodes) != 0 || len(mem.links) != 0 {
 		t.Fatalf("nil extractor wrote to memory: %+v", mem.nodes)
+	}
+}
+
+func TestConsolidateContinuesPastRecordError(t *testing.T) {
+	mem := newRec()
+	mem.failOn = "facts/eco" // the shared fact fails; the private skill must still persist
+	ex := &fakeExtractor{}
+	l := NewLearner(mem, "alpha", contracts.MemoryScope{Project: "projects/g", Agent: "agents/s"}, ex, "", 0)
+
+	err := l.Consolidate(context.Background())
+	if err == nil {
+		t.Fatal("expected the failing candidate's error to be returned")
+	}
+	// A per-candidate failure must not abort the batch: the sibling still persists.
+	if _, ok := mem.nodes["skills/ds"]; !ok {
+		t.Fatal("candidate after the failing one was skipped")
 	}
 }
 

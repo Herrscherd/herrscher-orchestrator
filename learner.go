@@ -82,18 +82,22 @@ func (l *Learner) Consolidate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var firstErr error
 	for _, c := range cands {
 		if l.seen[c.Node.Key] {
 			continue // already persisted this session — keep Consolidate idempotent
 		}
+		var err error
 		if c.Private {
-			if err := contracts.RecordPrivate(ctx, l.mem, l.scope, c.Node); err != nil {
-				return err
-			}
+			err = contracts.RecordPrivate(ctx, l.mem, l.scope, c.Node)
 		} else {
-			if err := contracts.RecordShared(ctx, l.mem, l.scope, c.Node); err != nil {
-				return err
-			}
+			err = contracts.RecordShared(ctx, l.mem, l.scope, c.Node)
+		}
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err // record the first failure and keep going: one bad
+			} // candidate must not drop its siblings or skip the sweep below
+			continue
 		}
 		l.seen[c.Node.Key] = true
 	}
@@ -101,7 +105,7 @@ func (l *Learner) Consolidate(ctx context.Context) error {
 	// error must never propagate out of Consolidate (invariant: learning never
 	// breaks a turn).
 	_ = l.Sweep(ctx)
-	return nil
+	return firstErr
 }
 
 // readJournalTail returns the journal bytes appended since the last Consolidate,
