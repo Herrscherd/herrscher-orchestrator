@@ -127,11 +127,19 @@ type Learner struct {
 
 	// rawArchive enables the G7 raw-session archival tier: when true, every
 	// Observe best-effort records one verbatim KindTranscript node per turn. Off
-	// by default (append-heavy); set via SetRawArchive. rawSeq is the per-Learner
-	// monotonic turn counter for the raw node key; it advances under stampMu
-	// alongside n, never on the consolidation mu.
+	// by default (append-heavy); set via SetRawArchive.
 	rawArchive bool
-	rawSeq     int
+	// rawEpoch and rawSeq build the raw node key raw/<tail>/<epoch>-<seq>. rawSeq
+	// is the per-process monotonic turn counter; rawEpoch is a one-shot wall-clock
+	// stamp captured on the first raw record of this process. The epoch prefix is
+	// what keeps the append-only tier intact across a bridge restart of a resumed
+	// session: the bridge runs as a supervised subprocess, so a plain counter
+	// would reset to 1 and overwrite raw/<tail>/1.. of the earlier run — but each
+	// run gets a distinct epoch (restarts are seconds apart via supervisor
+	// backoff), so keys never collide across runs, while the dense counter keeps
+	// them unique and ordered within a run. Both advance under stampMu alongside n.
+	rawEpoch string
+	rawSeq   int
 }
 
 var _ contracts.Orchestrator = (*Learner)(nil)
@@ -256,13 +264,18 @@ func (l *Learner) Observe(ctx context.Context, p contracts.Prompt, reply string)
 		due = l.n%l.every == 0
 	}
 	var rawSeq int
+	var rawEpoch string
 	if l.rawArchive {
+		if l.rawEpoch == "" {
+			l.rawEpoch = l.now().UTC().Format("20060102T150405.000000000Z")
+		}
 		l.rawSeq++
 		rawSeq = l.rawSeq
+		rawEpoch = l.rawEpoch
 	}
 	l.stampMu.Unlock()
 	if rawSeq > 0 {
-		l.recordRaw(ctx, p, reply, rawSeq) // best-effort; never breaks the turn
+		l.recordRaw(ctx, p, reply, rawEpoch, rawSeq) // best-effort; never breaks the turn
 	}
 	if due {
 		_ = l.Consolidate(ctx)
@@ -274,14 +287,16 @@ func (l *Learner) Observe(ctx context.Context, p contracts.Prompt, reply string)
 // best-effort: any error is discarded so archival never breaks the turn loop
 // (invariant 2). The Body is the full untruncated prompt+reply — the obsidian
 // per-node budget is bypassed for KindTranscript, so nothing is lost. Keyed
-// raw/<sessionTail>/<seq> (append-only, monotonic; never re-recorded).
-func (l *Learner) recordRaw(ctx context.Context, p contracts.Prompt, reply string, seq int) {
+// raw/<sessionTail>/<epoch>-<seq>: append-only and monotonic within a run, and
+// the per-process epoch keeps a resumed session's earlier turns from being
+// overwritten after a bridge restart (see the rawEpoch/rawSeq field comment).
+func (l *Learner) recordRaw(ctx context.Context, p contracts.Prompt, reply, epoch string, seq int) {
 	if l.mem == nil {
 		return
 	}
 	tail := strings.TrimPrefix(l.session, "sessions/")
 	_ = l.mem.Record(ctx, contracts.Node{
-		Key:   fmt.Sprintf("raw/%s/%d", tail, seq),
+		Key:   fmt.Sprintf("raw/%s/%s-%d", tail, epoch, seq),
 		Kind:  contracts.KindTranscript,
 		Title: fmt.Sprintf("turn %d", seq),
 		Body:  fmt.Sprintf("%s: %s\n\nassistant: %s", p.Author, p.Content, reply),
