@@ -39,7 +39,7 @@ func (f *sweepFakeMem) Search(ctx context.Context, q contracts.Query) ([]contrac
 	return out, nil
 }
 func (f *sweepFakeMem) Links(ctx context.Context, from, to, rel string) error { return nil }
-func (f *sweepFakeMem) Unlink(context.Context, string, string) error { return nil }
+func (f *sweepFakeMem) Unlink(context.Context, string, string) error          { return nil }
 func (f *sweepFakeMem) Close() error                                          { return nil }
 
 func seed(f *sweepFakeMem, key string, ageDays int, now time.Time) {

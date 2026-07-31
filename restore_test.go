@@ -37,7 +37,7 @@ func (m *restoreMem) Search(context.Context, contracts.Query) ([]contracts.Node,
 	return nil, nil
 }
 func (m *restoreMem) Links(context.Context, string, string, string) error { return nil }
-func (m *restoreMem) Unlink(context.Context, string, string) error { return nil }
+func (m *restoreMem) Unlink(context.Context, string, string) error        { return nil }
 func (m *restoreMem) Close() error                                        { return nil }
 
 // TestForceRestoreDropsMergedIntoEdge locks the G4 follow-up: force-restoring a

@@ -34,5 +34,12 @@ jobs:
             go work init . _deps/herrscher-contracts
           fi
 
+      # Own sources only: _deps holds a checked-out dependency, whose formatting
+      # is its own repo's business. Downstream repos vendor this one the same
+      # way and gofmt the tree, so unformatted files here redden *their* CI.
+      - name: gofmt
+        run: |
+          bad="$(gofmt -l . | grep -v '^_deps/' || true)"
+          [ -z "$bad" ] || { echo "$bad"; exit 1; }
       - run: go vet ./...
       - run: go test ./...

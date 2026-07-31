@@ -37,7 +37,7 @@ func (m *budgetMem) Search(context.Context, contracts.Query) ([]contracts.Node, 
 	return nil, nil
 }
 func (m *budgetMem) Links(context.Context, string, string, string) error { return nil }
-func (m *budgetMem) Unlink(context.Context, string, string) error { return nil }
+func (m *budgetMem) Unlink(context.Context, string, string) error        { return nil }
 func (m *budgetMem) Close() error                                        { return nil }
 
 // oneBig returns a single over-budget shared fact from the journal/transcript.
