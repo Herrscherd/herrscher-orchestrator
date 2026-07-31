@@ -294,7 +294,10 @@ func (l *Learner) recordRaw(ctx context.Context, p contracts.Prompt, reply, epoc
 	if l.mem == nil {
 		return
 	}
-	tail := strings.TrimPrefix(l.session, "sessions/")
+	// session is trusted host config, but keep the raw tier's key confined to its
+	// own segment regardless: a stray '/' in the tail would otherwise nest the
+	// node elsewhere in the vault (or, with '..', escape the raw subtree).
+	tail := strings.ReplaceAll(strings.TrimPrefix(l.session, "sessions/"), "/", "-")
 	_ = l.mem.Record(ctx, contracts.Node{
 		Key:   fmt.Sprintf("raw/%s/%s-%d", tail, epoch, seq),
 		Kind:  contracts.KindTranscript,

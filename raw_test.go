@@ -90,6 +90,24 @@ func TestRawSurvivesLearnerRestart(t *testing.T) {
 	}
 }
 
+// TestRawKeyConfinesSessionTail verifies a '/' in the session id cannot make the
+// raw node escape its raw/<tail>/ segment (belt-and-suspenders; session is
+// trusted host config).
+func TestRawKeyConfinesSessionTail(t *testing.T) {
+	mem := newRec()
+	l := NewLearner(mem, "team/../evil", contracts.MemoryScope{}, nil, "", 0)
+	l.now = func() time.Time { return time.Date(2026, 1, 21, 9, 0, 0, 0, time.UTC) }
+	l.SetRawArchive(true)
+	if err := l.Observe(context.Background(), contracts.Prompt{Author: "a", Content: "x"}, "y"); err != nil {
+		t.Fatal(err)
+	}
+	for k := range rawNodes(mem) {
+		if strings.Contains(strings.TrimPrefix(k, "raw/"), "/../") || !strings.HasPrefix(k, "raw/team-..-evil/") {
+			t.Fatalf("raw key not confined to its segment: %q", k)
+		}
+	}
+}
+
 func TestObserveSkipsRawWhenDisabled(t *testing.T) {
 	mem := newRec()
 	l := NewLearner(mem, "sess-1", contracts.MemoryScope{}, nil, "", 0)
