@@ -43,6 +43,7 @@ func (f *fakeMem) Links(_ context.Context, from, to, rel string) error {
 	f.links = append(f.links, [3]string{from, to, rel})
 	return nil
 }
+func (f *fakeMem) Unlink(context.Context, string, string) error { return nil }
 func (f *fakeMem) Close() error { return nil }
 
 var errNotFound = &notFound{}

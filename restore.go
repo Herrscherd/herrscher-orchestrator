@@ -86,11 +86,19 @@ func Restore(ctx context.Context, mem contracts.Memory, key string, opts ...Rest
 	}
 	n.Meta[contracts.MetaState] = contracts.StateActive
 	n.Meta[contracts.MetaLastSeen] = cfg.clock().UTC().Format(time.RFC3339)
+	umbrella := ""
 	if cfg.force {
+		umbrella = n.Meta[MetaMergedInto]
 		delete(n.Meta, MetaMergedInto)
 	}
 	if err := mem.Record(ctx, n); err != nil {
 		return "", err
+	}
+	if umbrella != "" {
+		// Best-effort: the reactivation already succeeded; a failure to drop the
+		// residual merged-into edge must not fail the restore (learning never
+		// breaks the turn). The umbrella is additive, so a stale edge is cosmetic.
+		_ = mem.Unlink(ctx, key, umbrella)
 	}
 	return prior, nil
 }

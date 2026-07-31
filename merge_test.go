@@ -35,6 +35,7 @@ func (m *mergeMem) Links(_ context.Context, from, to, rel string) error {
 	m.links = append(m.links, [3]string{from, to, rel})
 	return nil
 }
+func (m *mergeMem) Unlink(context.Context, string, string) error { return nil }
 func (m *mergeMem) Close() error { return nil }
 
 // fakeMerger is an Extractor that ALSO implements Merger. It records each Merge

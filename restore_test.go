@@ -37,7 +37,33 @@ func (m *restoreMem) Search(context.Context, contracts.Query) ([]contracts.Node,
 	return nil, nil
 }
 func (m *restoreMem) Links(context.Context, string, string, string) error { return nil }
+func (m *restoreMem) Unlink(context.Context, string, string) error { return nil }
 func (m *restoreMem) Close() error                                        { return nil }
+
+// TestForceRestoreDropsMergedIntoEdge locks the G4 follow-up: force-restoring a
+// merged original must not only clear Meta[MetaMergedInto] but also drop the
+// residual merged-into edge the merge pass created (via the new Unlink port
+// verb). Uses recMem, whose Unlink actually removes from its link store.
+func TestForceRestoreDropsMergedIntoEdge(t *testing.T) {
+	ctx := context.Background()
+	mem := newRec()
+	mem.nodes["facts/x"] = contracts.Node{Key: "facts/x", Meta: map[string]string{
+		contracts.MetaState: contracts.StateArchived,
+		MetaMergedInto:      "facts/umbrella",
+	}}
+	mem.links = append(mem.links, [3]string{"facts/x", "facts/umbrella", "merged-into"})
+
+	if _, err := Restore(ctx, mem, "facts/x", Force(true)); err != nil {
+		t.Fatal(err)
+	}
+
+	if mem.hasLink("facts/x", "facts/umbrella") {
+		t.Fatalf("force-restore left the merged-into edge: %v", mem.links)
+	}
+	if mem.nodes["facts/x"].Meta[MetaMergedInto] != "" {
+		t.Fatalf("force-restore left MetaMergedInto set")
+	}
+}
 
 func TestRestoreHappyPath(t *testing.T) {
 	m := newRestoreMem()
