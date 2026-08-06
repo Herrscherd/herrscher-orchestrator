@@ -168,7 +168,7 @@ func (l *Learner) SetRawArchive(on bool) {
 // DueForIdleRun reports whether an inactivity-triggered Consolidate should fire,
 // given the current time and the timestamp of the last observed activity. It is
 // pure: it reads now as an explicit parameter (not l.now()), so it is unit-
-// testable with fixed times and needs no real timers. Mirrors Hermes:
+// testable with fixed times and needs no real timers. The rule is
 // (now-lastRun >= idleDays) AND (now-lastActivity >= idleHours), both inclusive.
 // It returns false when the trigger is disabled (idleDays <= 0), when lastRun is
 // zero (never consolidated: no baseline yet), or when either threshold is unmet.
