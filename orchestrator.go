@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Herrscherd/herrscher-contracts"
@@ -38,7 +39,11 @@ type Transition struct {
 // without continuity (Context returns "", Observe no-ops).
 type Curator struct {
 	mem     contracts.Memory
-	session string                // session node key
+	session string // session node key
+	// scope is guarded by scopeMu because SetScope can re-root a live session
+	// from the turn goroutine while a background idle Consolidate is walking the
+	// roots it is about to replace. Every read goes through scopeOf.
+	scopeMu sync.RWMutex
 	scope   contracts.MemoryScope // P1: shared project + private agent roots ({} = none)
 	pending []contracts.Node      // hits from the model's last <recall>, surfaced next Context
 
@@ -80,6 +85,22 @@ func (c *Curator) SetStaleness(staleAfter, archiveAfter time.Duration) {
 	c.archiveAfter = archiveAfter
 }
 
+// scopeOf reads the memory scope under scopeMu.
+func (c *Curator) scopeOf() contracts.MemoryScope {
+	c.scopeMu.RLock()
+	defer c.scopeMu.RUnlock()
+	return c.scope
+}
+
+// SetScope re-roots memory mid-session. The host calls it once, when a session's
+// first prompt settles a project its launch could only guess at; what was already
+// filed stays filed, because a fact recorded under the guess is still true.
+func (c *Curator) SetScope(s contracts.MemoryScope) {
+	c.scopeMu.Lock()
+	c.scope = s
+	c.scopeMu.Unlock()
+}
+
 var _ contracts.Orchestrator = (*Curator)(nil)
 
 // Context recalls the session node and its neighbours into a compact background
@@ -92,8 +113,8 @@ func (c *Curator) Context(ctx context.Context) string {
 	var b strings.Builder
 	// P1: durable shared (project) + private (agent) memory first, so the agent
 	// recalls the game's lore/conventions and its own learned skills every turn.
-	if c.scope.Project != "" {
-		if sg, err := contracts.RecallScoped(ctx, c.mem, c.scope, 1); err == nil {
+	if scope := c.scopeOf(); scope.Project != "" {
+		if sg, err := contracts.RecallScoped(ctx, c.mem, scope, 1); err == nil {
 			writeNode(&b, sg.Root)
 			for _, n := range sg.Nodes {
 				writeNode(&b, n)

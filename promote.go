@@ -91,12 +91,13 @@ func cloneMeta(m map[string]string) map[string]string {
 // applyUmbrella so a crash between the two leaves the original still eligible
 // for a safe retry (Record upserts by Key) rather than labeled-but-copyless.
 func (l *Learner) applyPromotion(ctx context.Context, n contracts.Node) error {
+	scope := l.scopeOf()
 	dup := n
-	dup.Key = promotedKey(l.scope.Project, n.Key)
+	dup.Key = promotedKey(scope.Project, n.Key)
 	dup.Meta = cloneMeta(n.Meta)
 	delete(dup.Meta, MetaPromotedTo) // the copy is not itself "promoted"
 	dup.Meta[MetaPromotedFrom] = n.Key
-	if err := contracts.RecordShared(ctx, l.mem, l.scope, dup); err != nil {
+	if err := contracts.RecordShared(ctx, l.mem, scope, dup); err != nil {
 		return err
 	}
 	if err := l.mem.Links(ctx, n.Key, dup.Key, "promoted-to"); err != nil {
@@ -119,14 +120,15 @@ func (l *Learner) applyPromotion(ctx context.Context, n contracts.Node) error {
 // Memory all yield a clean no-op; a per-node write failure is recorded as the
 // first error but never aborts the rest of the pass.
 func (l *Learner) Promote(ctx context.Context) error {
-	if l.promoteMinAge <= 0 || l.mem == nil || l.scope.Project == "" || l.scope.Agent == "" {
+	scope := l.scopeOf()
+	if l.promoteMinAge <= 0 || l.mem == nil || scope.Project == "" || scope.Agent == "" {
 		return nil
 	}
 	nodes, err := l.mem.Search(ctx, contracts.Query{}) // active+stale, never archived
 	if err != nil {
 		return err
 	}
-	prefix := l.scope.Agent + "/"
+	prefix := scope.Agent + "/"
 	now := l.now().UTC()
 	var firstErr error
 	for _, n := range nodes {

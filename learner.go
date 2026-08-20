@@ -398,10 +398,21 @@ func (l *Learner) consolidator() (Consolidator, bool) {
 
 // record writes one candidate under the scope chosen by c.Private.
 func (l *Learner) record(ctx context.Context, c Candidate) error {
+	scope := l.scopeOf()
 	if c.Private {
-		return contracts.RecordPrivate(ctx, l.mem, l.scope, c.Node)
+		return contracts.RecordPrivate(ctx, l.mem, scope, c.Node)
 	}
-	return contracts.RecordShared(ctx, l.mem, l.scope, c.Node)
+	return contracts.RecordShared(ctx, l.mem, scope, c.Node)
+}
+
+// SetScope re-roots memory, waiting for any consolidation in flight to finish
+// first, so one pass never files half its findings under the old project and the
+// other half under the new one. Lock order is mu → scopeMu, the same direction as
+// mu → stampMu, so the three can never deadlock.
+func (l *Learner) SetScope(s contracts.MemoryScope) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.Curator.SetScope(s)
 }
 
 // persist records one candidate, responding to a per-node budget refusal
