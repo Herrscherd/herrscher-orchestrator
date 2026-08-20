@@ -85,7 +85,6 @@ func (c *Curator) SetStaleness(staleAfter, archiveAfter time.Duration) {
 	c.archiveAfter = archiveAfter
 }
 
-// scopeOf reads the memory scope under scopeMu.
 func (c *Curator) scopeOf() contracts.MemoryScope {
 	c.scopeMu.RLock()
 	defer c.scopeMu.RUnlock()
