@@ -61,8 +61,8 @@ func (c *Curator) recall(ctx context.Context, query string) {
 		return
 	}
 	var hits []contracts.Node
-	if c.scope.Project != "" {
-		hits, _ = contracts.RecallRelevant(ctx, c.mem, c.scope, query, recallK)
+	if scope := c.scopeOf(); scope.Project != "" {
+		hits, _ = contracts.RecallRelevant(ctx, c.mem, scope, query, recallK)
 	} else {
 		hits, _ = c.mem.Search(ctx, contracts.Query{Text: query, Ranked: true, Limit: recallK})
 	}
@@ -82,9 +82,9 @@ func (c *Curator) remember(ctx context.Context, fact string) {
 	}
 	title := oneline(fact, maxContentChars)
 	node := contracts.Node{Kind: contracts.KindDecision, Title: title, Body: fact}
-	if c.scope.Project != "" {
-		node.Key = c.scope.Project + "/notes/" + slug(title)
-		_ = contracts.RecordShared(ctx, c.mem, c.scope, node)
+	if scope := c.scopeOf(); scope.Project != "" {
+		node.Key = scope.Project + "/notes/" + slug(title)
+		_ = contracts.RecordShared(ctx, c.mem, scope, node)
 		return
 	}
 	node.Key = c.session + "/notes/" + slug(title)
