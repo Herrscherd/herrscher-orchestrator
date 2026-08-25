@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"sort"
 	"strings"
@@ -55,21 +56,29 @@ func (c *Curator) recordSkill(ctx context.Context, rawName, body string) {
 	if name == "" || body == "" {
 		return
 	}
+	// A skill needs a private scope to live in. Falling back to the project root,
+	// the way contracts.RecordPrivate does for a fact, would put instructions every
+	// agent of the project executes one marker away from any session, with no
+	// approval anywhere in the path. A fact crossing that way is a fact; a skill
+	// crossing that way is the boundary this feature is built around.
 	scope := c.scopeOf()
-	root := scope.Agent
-	if root == "" {
-		root = scope.Project
-	}
-	if root == "" {
+	if scope.Agent == "" {
+		slog.Warn("memory: a skill was written by a session with no private memory root, so it was dropped rather than shared with the project",
+			"skill", name, "project", scope.Project)
 		return
 	}
 	stamp := c.now().UTC().Format(time.RFC3339)
 	node := contracts.Node{
-		Key:   root + "/skills/" + name,
+		Key:   scope.Agent + "/skills/" + name,
 		Kind:  contracts.KindSkill,
 		Title: name,
 		Body:  body,
-		Meta:  map[string]string{contracts.MetaLastSeen: stamp, "capturedAt": stamp},
+		// Meta is rebuilt rather than carried over, which is what makes an approval
+		// bind to the body it was granted for: revising a skill drops MetaApproved,
+		// so a skill approved once cannot be quietly rewritten into something else
+		// and promoted on the strength of the old decision. capturedAt below is the
+		// single deliberate exception.
+		Meta: map[string]string{contracts.MetaLastSeen: stamp, "capturedAt": stamp},
 	}
 	// capturedAt is preserved on revision rather than restamped: promoteEligible
 	// measures maturity as lastSeen minus capturedAt, so moving it forward every
@@ -109,8 +118,14 @@ func skillName(raw string) string {
 // has no business in it, and a private candidate can legitimately be a private
 // *fact* rather than a procedure. The key prefix is the discriminant, read as a
 // path segment so "skillsets/x" is not mistaken for a skill.
-func asLearnedSkill(c Candidate) Candidate {
-	if !c.Private {
+//
+// hasPrivateScope is the same guard recordSkill applies: without an agent root,
+// contracts.RecordPrivate files a "private" candidate under the project instead,
+// and a skill filed there is executed by every agent of the project without
+// anyone approving it. The candidate is left the ordinary node it was, so a
+// session with no private root learns exactly what it learned before.
+func asLearnedSkill(c Candidate, hasPrivateScope bool) Candidate {
+	if !c.Private || !hasPrivateScope {
 		return c
 	}
 	if !strings.HasPrefix(strings.TrimPrefix(c.Node.Key, "/"), "skills/") {
@@ -176,24 +191,36 @@ func (c *Curator) LearnedSkills(ctx context.Context) ([]contracts.Node, error) {
 	sort.Slice(private, func(i, j int) bool { return private[i].Key < private[j].Key })
 	sort.Slice(shared, func(i, j int) bool { return shared[i].Key < shared[j].Key })
 
-	seen := make(map[string]bool, len(private)+len(shared))
+	seen := make(map[string]string, len(private)+len(shared))
 	out := make([]contracts.Node, 0, len(private)+len(shared))
 	for _, n := range append(private, shared...) {
 		name := skillTail(n.Key)
-		if name == "" || seen[name] {
+		if name == "" || seen[name] != "" {
 			continue
 		}
-		seen[name] = true
+		seen[name] = n.Key
 		out = append(out, n)
 	}
+	c.projectedMu.Lock()
+	c.projected = seen
+	c.projectedMu.Unlock()
 	return out, nil
 }
 
-// SkillUsed refreshes lastSeen on each named skill, in whichever scope holds it.
-// The host calls it with the names the skills engine saw activated in a reply,
-// which makes this the whole of "improvement through use" in the sense that can
-// actually be measured: nothing here judges whether the skill helped, only that
-// it was reached for.
+// SkillUsed refreshes lastSeen on each named skill. The host calls it with the
+// names the skills engine saw activated in a reply, which makes this the whole of
+// "improvement through use" in the sense that can actually be measured: nothing
+// here judges whether the skill helped, only that it was reached for.
+//
+// The names are resolved against what LearnedSkills last answered rather than
+// rebuilt from the scope roots, and that is what makes it correct rather than
+// merely cheap. A skill's Key depends on how it was written: the <skill> marker
+// keys under the agent root, while an extractor candidate keeps the flat key it
+// was distilled with and is only *linked* under that root. A derived key finds
+// the first and silently misses the second, so a skill the agent used every day
+// would age out as unused. Resolving through the projection also means a repo or
+// machine-wide skill, which the engine reports by the same name and which no node
+// backs, costs no lookup at all.
 //
 // Two things fall out of that, and they are why this is worth a seam:
 //
@@ -209,30 +236,31 @@ func (c *Curator) SkillUsed(ctx context.Context, names []string) {
 	if c.mem == nil || !c.learnedSkills || len(names) == 0 {
 		return
 	}
-	scope := c.scopeOf()
+	c.projectedMu.RLock()
+	projected := c.projected
+	c.projectedMu.RUnlock()
+	if len(projected) == 0 {
+		return
+	}
 	stamp := c.now().UTC().Format(time.RFC3339)
 	for _, raw := range names {
-		name := skillName(raw)
-		if name == "" {
+		key := projected[strings.TrimSpace(raw)]
+		if key == "" {
 			continue
 		}
-		for _, root := range []string{scope.Agent, scope.Project} {
-			if root == "" {
-				continue
-			}
-			sg, err := c.mem.Recall(ctx, root+"/skills/"+name, 0)
-			// Guarded on the kind, not just the key: a non-skill node that happens to
-			// sit under a skills/ path must not be rewritten by a usage stamp.
-			if err != nil || sg.Root.Kind != contracts.KindSkill {
-				continue
-			}
-			n := sg.Root
-			if n.Meta == nil {
-				n.Meta = map[string]string{}
-			}
-			n.Meta[contracts.MetaLastSeen] = stamp
-			_ = c.mem.Record(ctx, n)
+		sg, err := c.mem.Recall(ctx, key, 0)
+		// Guarded on the kind, not just the key: the projection is a session-old
+		// answer, and a node that has since become something else must not be
+		// rewritten by a usage stamp.
+		if err != nil || sg.Root.Kind != contracts.KindSkill {
+			continue
 		}
+		n := sg.Root
+		if n.Meta == nil {
+			n.Meta = map[string]string{}
+		}
+		n.Meta[contracts.MetaLastSeen] = stamp
+		_ = c.mem.Record(ctx, n)
 	}
 }
 
