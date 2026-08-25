@@ -44,6 +44,13 @@ func (l *Learner) promoteEligible(n contracts.Node, now time.Time) bool {
 	if n.Meta[MetaMergedInto] != "" || n.Meta[MetaPromotedTo] != "" {
 		return false
 	}
+	// A skill is instructions, not a fact. Promotion is the one place in the
+	// system where the blast radius changes, from what this agent believes to what
+	// every agent of the project executes, so it is the one place the boundary is
+	// held. A fact keeps crossing on maturity alone.
+	if n.Kind == contracts.KindSkill && n.Meta[MetaApproved] == "" {
+		return false
+	}
 	capturedAt, err1 := time.Parse(time.RFC3339, n.Meta["capturedAt"])
 	lastSeen, err2 := time.Parse(time.RFC3339, n.Meta[contracts.MetaLastSeen])
 	if err1 != nil || err2 != nil {

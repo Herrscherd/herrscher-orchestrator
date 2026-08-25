@@ -398,6 +398,9 @@ func (l *Learner) consolidator() (Consolidator, bool) {
 
 // record writes one candidate under the scope chosen by c.Private.
 func (l *Learner) record(ctx context.Context, c Candidate) error {
+	if l.learnedSkills {
+		c = asLearnedSkill(c)
+	}
 	scope := l.scopeOf()
 	if c.Private {
 		return contracts.RecordPrivate(ctx, l.mem, scope, c.Node)

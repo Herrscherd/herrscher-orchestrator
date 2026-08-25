@@ -51,6 +51,16 @@ func (c *Curator) React(ctx context.Context, reply string) string {
 	}
 	reply = rememberMarker.ReplaceAllString(reply, "")
 	reply = recallMarker.ReplaceAllString(reply, "")
+	// The skill marker is handled only when the feature is on. With it off the
+	// marker is left verbatim rather than stripped: an operator reading a reply
+	// that still says <skill> learns the switch is off, where a silently eaten
+	// marker would look like it worked.
+	if c.learnedSkills {
+		for _, m := range skillMarker.FindAllStringSubmatch(reply, -1) {
+			c.recordSkill(ctx, m[1], m[2])
+		}
+		reply = skillMarker.ReplaceAllString(reply, "")
+	}
 	return strings.TrimSpace(reply)
 }
 
@@ -98,6 +108,9 @@ func (c *Curator) frame(digest string) string {
 	var b strings.Builder
 	b.WriteString("<memory>\n")
 	b.WriteString(memoryPreamble)
+	if c.learnedSkills {
+		b.WriteString(skillPreamble)
+	}
 	if digest != "" {
 		b.WriteString("\n\n")
 		b.WriteString(digest)

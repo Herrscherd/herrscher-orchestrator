@@ -27,6 +27,7 @@ func init() {
 				{Key: "idle-days", Env: "MEMORY_IDLE_DAYS", Help: "days since the last Consolidate run before the G5 inactivity trigger may fire; <=0 disables G5 (default 0, off)", Required: false},
 				{Key: "idle-hours", Env: "MEMORY_IDLE_HOURS", Help: "hours of quiet (no observed turn) required, once idle-days has elapsed, before the idle trigger fires; only consulted when idle-days > 0; 0 removes the quiet-period gate so it fires as soon as idle-days elapses (default 2)", Required: false},
 				{Key: "raw-archive", Env: "MEMORY_RAW_ARCHIVE", Help: "when true/1/on/yes, the learner archives one untruncated raw transcript node per turn (G7 full-text tier), surfaced only by memory search --raw; anything else keeps the default (default off, append-heavy)", Required: false},
+				{Key: "learned-skills", Env: "MEMORY_LEARNED_SKILLS", Help: `when true/1/on/yes, the agent may write its own skills with <skill name="...">, the host projects them into the session worktree as SKILL.md, and using one keeps it alive; sharing one with the project's other agents still needs an explicit approval (default off)`, Required: false},
 			},
 		},
 		Orchestrator: func(ctx context.Context, cfg contracts.PluginConfig, mem contracts.Memory) (contracts.Orchestrator, error) {
@@ -42,6 +43,9 @@ func init() {
 			}
 			stale := staleDuration(cfg.Get("stale-days"), 30)
 			archive := staleDuration(cfg.Get("archive-days"), 90)
+			// Wired into both branches below: the <skill> marker is a Curator
+			// capability, so it has to work on a host that plugged in no extractor.
+			learnedSkills := boolSetting(cfg.Get("learned-skills"), false)
 			// Opt into the learning loop when the host names a registered
 			// extractor (the closed curation heuristics, plugged in by blank
 			// import). Without one we keep the plain Curator, so an unconfigured
@@ -66,10 +70,12 @@ func init() {
 				l.SetIdle(idleDays, idleHours)
 				rawArchive := boolSetting(cfg.Get("raw-archive"), false)
 				l.SetRawArchive(rawArchive)
+				l.SetLearnedSkills(learnedSkills)
 				return l, nil
 			}
 			c := NewScoped(mem, cfg.Get("session"), scope)
 			c.SetStaleness(stale, archive)
+			c.SetLearnedSkills(learnedSkills)
 			return c, nil
 		},
 	})
