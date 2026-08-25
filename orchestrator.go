@@ -47,6 +47,13 @@ type Curator struct {
 	scope   contracts.MemoryScope // P1: shared project + private agent roots ({} = none)
 	pending []contracts.Node      // hits from the model's last <recall>, surfaced next Context
 
+	// learnedSkills gates the whole self-authored-skill feature: the <skill>
+	// marker, the sentence in the preamble that announces it, the normalisation of
+	// extractor candidates, and what LearnedSkills answers. One switch rather than
+	// one per surface, because a marker that writes nothing and a preamble that
+	// advertises it are two halves of the same mistake.
+	learnedSkills bool
+
 	now          func() time.Time // injectable clock (defaults to time.Now); tests override
 	staleAfter   time.Duration    // age before a node is marked stale (<=0 disables)
 	archiveAfter time.Duration    // age before a node is archived (<=0 disables)
@@ -116,6 +123,15 @@ func (c *Curator) Context(ctx context.Context) string {
 		if sg, err := contracts.RecallScoped(ctx, c.mem, scope, 1); err == nil {
 			writeNode(&b, sg.Root)
 			for _, n := range sg.Nodes {
+				// A KindSkill node is projected to disk and announced in the skills
+				// menu, so reciting its body here would put the same instructions in
+				// the same prompt twice: once in full, once in summary. The gate is
+				// here and not in the store, where the raw transcript tier put its own,
+				// precisely because a skill must stay reachable by memory search and
+				// memory restore. It must simply not be recited.
+				if n.Kind == contracts.KindSkill {
+					continue
+				}
 				writeNode(&b, n)
 			}
 		}
