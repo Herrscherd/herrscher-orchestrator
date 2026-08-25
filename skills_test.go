@@ -123,6 +123,11 @@ func TestReactSkillUpsertsInPlaceKeepingCapturedAt(t *testing.T) {
 	ctx := context.Background()
 
 	c.React(ctx, `<skill name="x">première version</skill>`)
+	// An operator approved the first version. The revision below must not inherit
+	// that decision: an approval binds to the body it was granted for.
+	approved := m.nodes["agents/a/skills/x"]
+	approved.Meta[MetaApproved] = "true"
+	m.nodes["agents/a/skills/x"] = approved
 	c.now = func() time.Time { return time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC) }
 	c.React(ctx, `<skill name="x">seconde version</skill>`)
 
@@ -138,6 +143,32 @@ func TestReactSkillUpsertsInPlaceKeepingCapturedAt(t *testing.T) {
 	}
 	if n.Meta[contracts.MetaLastSeen] != "2026-06-01T00:00:00Z" {
 		t.Errorf("lastSeen = %q, want the revision time", n.Meta[contracts.MetaLastSeen])
+	}
+	if n.Meta[MetaApproved] != "" {
+		t.Errorf("the revision kept the old approval, so a skill approved once could be rewritten into anything: %v", n.Meta)
+	}
+}
+
+// The private scope is where the whole trust boundary lives: a skill is free in
+// its agent's root and needs a human to cross into the project's. A session with
+// no agent root has no free side, and contracts.RecordPrivate would file the node
+// under the project instead. Dropping it is the only answer that does not hand
+// every agent of the project an unapproved procedure.
+func TestReactSkillNeedsAPrivateScope(t *testing.T) {
+	m := newSkillMem()
+	c := NewScoped(m, "s1", contracts.MemoryScope{Project: "projects/p"})
+	c.SetLearnedSkills(true)
+
+	out := c.React(context.Background(), `avant <skill name="x">un corps</skill> après`)
+
+	if len(m.nodes) != 0 {
+		t.Errorf("wrote %v, want nothing: with no agent root this lands in the shared scope", m.keys())
+	}
+	if !strings.Contains(out, "avant") || !strings.Contains(out, "après") {
+		t.Errorf("the reply lost its prose: %q", out)
+	}
+	if strings.Contains(out, "<skill") {
+		t.Errorf("marker not stripped: %q", out)
 	}
 }
 
@@ -212,29 +243,35 @@ func TestSkillNameCapsALongName(t *testing.T) {
 
 func TestAsLearnedSkillStampsPrivateSkillCandidates(t *testing.T) {
 	cases := []struct {
-		name string
-		in   Candidate
-		want contracts.NodeKind
+		name    string
+		in      Candidate
+		private bool
+		want    contracts.NodeKind
 	}{
 		{"private under skills/ becomes a skill",
 			Candidate{Private: true, Node: contracts.Node{Key: "skills/retry-http", Kind: contracts.KindDecision}},
-			contracts.KindSkill},
+			true, contracts.KindSkill},
 		{"private but not under skills/ is left alone",
 			Candidate{Private: true, Node: contracts.Node{Key: "notes/a-preference", Kind: contracts.KindDecision}},
-			contracts.KindDecision},
+			true, contracts.KindDecision},
 		{"shared under skills/ is left alone",
 			Candidate{Private: false, Node: contracts.Node{Key: "skills/shared-thing", Kind: contracts.KindDecision}},
-			contracts.KindDecision},
+			true, contracts.KindDecision},
 		{"a leading slash is still under skills/",
 			Candidate{Private: true, Node: contracts.Node{Key: "/skills/x"}},
-			contracts.KindSkill},
+			true, contracts.KindSkill},
 		{"skills as a name prefix is not skills as a segment",
 			Candidate{Private: true, Node: contracts.Node{Key: "skillsets/x", Kind: contracts.KindDecision}},
-			contracts.KindDecision},
+			true, contracts.KindDecision},
+		// Without an agent root the "private" candidate is filed under the project,
+		// so stamping it a skill would publish it to every agent unapproved.
+		{"no private scope leaves the candidate as it was",
+			Candidate{Private: true, Node: contracts.Node{Key: "skills/retry-http", Kind: contracts.KindDecision}},
+			false, contracts.KindDecision},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := asLearnedSkill(tc.in).Node.Kind; got != tc.want {
+			if got := asLearnedSkill(tc.in, tc.private).Node.Kind; got != tc.want {
 				t.Errorf("Kind = %q, want %q", got, tc.want)
 			}
 		})
@@ -312,29 +349,48 @@ func TestLearnedSkillsSilentWhenOff(t *testing.T) {
 	}
 }
 
-func TestSkillUsedAdvancesLastSeenInBothScopes(t *testing.T) {
+// The names the engine reports carry no key, and a key cannot be rebuilt from a
+// name: the <skill> marker writes agents/a/skills/x, while an extractor candidate
+// keeps the flat key it was distilled with and is only linked under that root.
+// Both shapes must be stamped, or a skill used every day would age out as unused.
+func TestSkillUsedAdvancesLastSeenForBothKeyShapes(t *testing.T) {
 	m := newSkillMem()
-	m.nodes["agents/a/skills/private-one"] = contracts.Node{
-		Key: "agents/a/skills/private-one", Kind: contracts.KindSkill, Body: "p",
-		Meta: map[string]string{contracts.MetaLastSeen: "2020-01-01T00:00:00Z", "capturedAt": "2020-01-01T00:00:00Z"},
+	const old = "2020-01-01T00:00:00Z"
+	for _, n := range []contracts.Node{
+		{Key: "agents/a/skills/private-one", Kind: contracts.KindSkill, Body: "p",
+			Meta: map[string]string{contracts.MetaLastSeen: old, "capturedAt": old}},
+		{Key: "skills/distilled-one", Kind: contracts.KindSkill, Body: "d",
+			Meta: map[string]string{contracts.MetaLastSeen: old}},
+		{Key: "projects/p/skills/shared-one", Kind: contracts.KindSkill, Body: "s",
+			Meta: map[string]string{contracts.MetaLastSeen: old}},
+	} {
+		m.nodes[n.Key] = n
 	}
-	m.nodes["projects/p/skills/shared-one"] = contracts.Node{
-		Key: "projects/p/skills/shared-one", Kind: contracts.KindSkill, Body: "s",
-		Meta: map[string]string{contracts.MetaLastSeen: "2020-01-01T00:00:00Z"},
+	m.recalls["agents/a"] = contracts.Subgraph{
+		Root:  contracts.Node{Key: "agents/a"},
+		Nodes: []contracts.Node{m.nodes["agents/a/skills/private-one"], m.nodes["skills/distilled-one"]},
+	}
+	m.recalls["projects/p"] = contracts.Subgraph{
+		Root:  contracts.Node{Key: "projects/p"},
+		Nodes: []contracts.Node{m.nodes["projects/p/skills/shared-one"]},
 	}
 	c := skillCurator(m)
 	c.now = func() time.Time { return time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC) }
 
-	c.SkillUsed(context.Background(), []string{"private-one", "shared-one"})
+	// The projection is what put these skills on disk in the first place, so it is
+	// always the step before the engine can report one activated.
+	if _, err := c.LearnedSkills(context.Background()); err != nil {
+		t.Fatalf("LearnedSkills: %v", err)
+	}
+	c.SkillUsed(context.Background(), []string{"private-one", "distilled-one", "shared-one"})
 
 	const want = "2026-08-25T12:00:00Z"
-	if got := m.nodes["agents/a/skills/private-one"].Meta[contracts.MetaLastSeen]; got != want {
-		t.Errorf("private lastSeen = %q, want %q", got, want)
+	for _, key := range []string{"agents/a/skills/private-one", "skills/distilled-one", "projects/p/skills/shared-one"} {
+		if got := m.nodes[key].Meta[contracts.MetaLastSeen]; got != want {
+			t.Errorf("%s lastSeen = %q, want %q", key, got, want)
+		}
 	}
-	if got := m.nodes["projects/p/skills/shared-one"].Meta[contracts.MetaLastSeen]; got != want {
-		t.Errorf("shared lastSeen = %q, want %q", got, want)
-	}
-	if got := m.nodes["agents/a/skills/private-one"].Meta["capturedAt"]; got != "2020-01-01T00:00:00Z" {
+	if got := m.nodes["agents/a/skills/private-one"].Meta["capturedAt"]; got != old {
 		t.Errorf("capturedAt = %q, want it untouched: promotion measures maturity between the two stamps", got)
 	}
 	if got := m.nodes["agents/a/skills/private-one"].Body; got != "p" {
@@ -344,14 +400,24 @@ func TestSkillUsedAdvancesLastSeenInBothScopes(t *testing.T) {
 
 func TestSkillUsedIgnoresWhatItCannotStamp(t *testing.T) {
 	m := newSkillMem()
-	m.nodes["agents/a/skills/not-a-skill"] = contracts.Node{
-		Key: "agents/a/skills/not-a-skill", Kind: contracts.KindDecision,
+	// Projected as a skill, but something else by the time it is stamped: the
+	// projection is a session-old answer, so the kind is re-checked at write time.
+	m.nodes["agents/a/skills/mutated"] = contracts.Node{Key: "agents/a/skills/mutated", Kind: contracts.KindDecision}
+	m.recalls["projects/p"] = contracts.Subgraph{Root: contracts.Node{Key: "projects/p"}}
+	m.recalls["agents/a"] = contracts.Subgraph{
+		Root:  contracts.Node{Key: "agents/a"},
+		Nodes: []contracts.Node{activeSkill("agents/a/skills/mutated", "t", "un corps")},
 	}
 	c := skillCurator(m)
+	if _, err := c.LearnedSkills(context.Background()); err != nil {
+		t.Fatalf("LearnedSkills: %v", err)
+	}
 
-	c.SkillUsed(context.Background(), []string{"never-heard-of-it", "!!!", "not-a-skill", ""})
+	// A repo or machine-wide skill the engine reports by name and no node backs
+	// must cost nothing, not a lookup per scope root.
+	c.SkillUsed(context.Background(), []string{"never-heard-of-it", "!!!", "mutated", ""})
 
-	if n := m.nodes["agents/a/skills/not-a-skill"]; n.Meta[contracts.MetaLastSeen] != "" {
+	if n := m.nodes["agents/a/skills/mutated"]; n.Meta[contracts.MetaLastSeen] != "" {
 		t.Errorf("stamped a node that is not a skill: %v", n.Meta)
 	}
 	if len(m.nodes) != 1 {

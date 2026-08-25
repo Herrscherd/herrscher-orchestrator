@@ -54,6 +54,12 @@ type Curator struct {
 	// advertises it are two halves of the same mistake.
 	learnedSkills bool
 
+	// projected is name -> node Key for what LearnedSkills last answered, which is
+	// what SkillUsed resolves an activated name against. It is written from the
+	// host's projection goroutine and read from the turn goroutine, hence the lock.
+	projectedMu sync.RWMutex
+	projected   map[string]string
+
 	now          func() time.Time // injectable clock (defaults to time.Now); tests override
 	staleAfter   time.Duration    // age before a node is marked stale (<=0 disables)
 	archiveAfter time.Duration    // age before a node is archived (<=0 disables)
