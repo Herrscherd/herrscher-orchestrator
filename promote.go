@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -91,6 +92,17 @@ func cloneMeta(m map[string]string) map[string]string {
 	return out
 }
 
+func (l *Learner) sharedKeyTaken(ctx context.Context, target string) bool {
+	sg, err := l.mem.Recall(ctx, target, 0)
+	if err != nil || sg.Root.Key != target {
+		return false
+	}
+	if sg.Root.Body == "" && sg.Root.Title == "" {
+		return false
+	}
+	return sg.Root.Meta[MetaPromotedFrom] == ""
+}
+
 // applyPromotion writes a shared copy of a proven private node n under the
 // project scope, links the original to it, and labels the original so it is
 // never re-promoted. Reversible: the original is kept, untouched apart from the
@@ -104,6 +116,10 @@ func (l *Learner) applyPromotion(ctx context.Context, n contracts.Node) error {
 	dup.Meta = cloneMeta(n.Meta)
 	delete(dup.Meta, MetaPromotedTo) // the copy is not itself "promoted"
 	dup.Meta[MetaPromotedFrom] = n.Key
+	if l.sharedKeyTaken(ctx, dup.Key) {
+		slog.Warn("memory: skipping promotion over an unrelated shared node", "from", n.Key, "to", dup.Key)
+		return nil
+	}
 	if err := contracts.RecordShared(ctx, l.mem, scope, dup); err != nil {
 		return err
 	}

@@ -87,12 +87,14 @@ func (l *Learner) Merge(ctx context.Context) error {
 		}
 		groups[n.Meta["domain"]] = append(groups[n.Meta["domain"]], n)
 	}
-	// All live (non-archived) node keys, so an umbrella can be rejected if it
-	// would overwrite an existing node outside its candidate group (spec §4:
-	// an umbrella must be a NEW node). Archived keys are excluded by Search and
-	// are inherently unrepresented here.
-	existing := make(map[string]bool, len(nodes))
-	for _, n := range nodes {
+	collisionSource := nodes
+	if all, aerr := l.mem.Search(ctx, contracts.Query{IncludeArchived: true}); aerr != nil {
+		slog.Warn("memory: merge collision set degraded to live nodes", "err", aerr)
+	} else {
+		collisionSource = all
+	}
+	existing := make(map[string]bool, len(collisionSource))
+	for _, n := range collisionSource {
 		existing[n.Key] = true
 	}
 	var firstErr error
@@ -120,10 +122,21 @@ func (l *Learner) Merge(ctx context.Context) error {
 	return firstErr
 }
 
+func mergeExcludedKind(k contracts.NodeKind) bool {
+	switch k {
+	case ReportKind, contracts.KindSession, contracts.KindTranscript:
+		return true
+	}
+	return false
+}
+
 // mergeEligible reports whether node n is in scope for the current merge target.
 // "all" = anything not archived; "active" = active/absent-state only; "stale"
 // (default) = stale only.
 func (l *Learner) mergeEligible(n contracts.Node) bool {
+	if mergeExcludedKind(n.Kind) {
+		return false
+	}
 	if n.Meta[MetaPromotedTo] != "" {
 		return false // a promoted original is settled: never re-fuse it with its shared copy
 	}
@@ -168,7 +181,12 @@ func (l *Learner) applyUmbrella(ctx context.Context, u Umbrella, group []contrac
 	// so its prior state is unconditionally "none" -> it now exists active.
 	l.transitions = append(l.transitions, Transition{Key: u.Node.Key, From: "", To: contracts.StateActive, Kind: "merge"})
 	var firstErr error
+	applied := make(map[string]bool, len(u.Merged))
 	for _, k := range u.Merged {
+		if applied[k] {
+			continue
+		}
+		applied[k] = true
 		orig := byKey[k]
 		prevState := orig.Meta[contracts.MetaState]
 		if prevState == "" {
@@ -208,8 +226,6 @@ func (l *Learner) validUmbrella(u Umbrella, byKey map[string]contracts.Node, exi
 		reason = "empty umbrella key"
 	case u.Node.Body == "":
 		reason = "empty umbrella body"
-	case len(u.Merged) < 2:
-		reason = "fewer than 2 originals"
 	}
 	if reason == "" {
 		if existing[u.Node.Key] {
@@ -217,11 +233,16 @@ func (l *Learner) validUmbrella(u Umbrella, byKey map[string]contracts.Node, exi
 		}
 	}
 	if reason == "" {
+		distinct := map[string]bool{}
 		for _, k := range u.Merged {
 			if _, ok := byKey[k]; !ok {
 				reason = "merged key outside candidate group"
 				break
 			}
+			distinct[k] = true
+		}
+		if reason == "" && len(distinct) < 2 {
+			reason = "fewer than 2 distinct originals"
 		}
 	}
 	if reason != "" {

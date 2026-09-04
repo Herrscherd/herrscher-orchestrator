@@ -112,7 +112,9 @@ func Restore(ctx context.Context, mem contracts.Memory, key string, opts ...Rest
 func (l *Learner) Restore(ctx context.Context, key string, opts ...RestoreOption) error {
 	prior, err := Restore(ctx, l.mem, key, opts...)
 	if err == nil {
+		l.mu.Lock()
 		l.transitions = append(l.transitions, Transition{Key: key, From: prior, To: contracts.StateActive, Kind: "restore"})
+		l.mu.Unlock()
 	}
 	return err
 }
