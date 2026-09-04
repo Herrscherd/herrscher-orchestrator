@@ -140,6 +140,9 @@ type Learner struct {
 	// them unique and ordered within a run. Both advance under stampMu alongside n.
 	rawEpoch string
 	rawSeq   int
+
+	stopIdle context.CancelFunc
+	idleDone chan struct{}
 }
 
 var _ contracts.Orchestrator = (*Learner)(nil)
@@ -194,10 +197,26 @@ func (l *Learner) DueForIdleRun(now, lastActivity time.Time) bool {
 // orchestrator; it never blocks a turn — the loop only ever fires Consolidate
 // from its own goroutine, single-flighted against the turn path via TryLock.
 func (l *Learner) Start(ctx context.Context) {
-	if l.idleDays <= 0 {
+	if l.idleDays <= 0 || l.stopIdle != nil {
 		return
 	}
-	go l.idleLoop(ctx)
+	ctx, cancel := context.WithCancel(ctx)
+	l.stopIdle = cancel
+	l.idleDone = make(chan struct{})
+	go func() {
+		defer close(l.idleDone)
+		l.idleLoop(ctx)
+	}()
+}
+
+func (l *Learner) Close() error {
+	if l.stopIdle != nil {
+		l.stopIdle()
+		<-l.idleDone
+		l.stopIdle = nil
+		l.idleDone = nil
+	}
+	return l.Curator.Close()
 }
 
 // idleLoop ticks every idlePollInterval and evaluates one idleTick per tick,

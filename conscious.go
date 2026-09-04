@@ -2,7 +2,9 @@ package orchestrator
 
 import (
 	"context"
+	"hash/fnv"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Herrscherd/herrscher-contracts"
@@ -93,11 +95,11 @@ func (c *Curator) remember(ctx context.Context, fact string) {
 	title := oneline(fact, maxContentChars)
 	node := contracts.Node{Kind: contracts.KindDecision, Title: title, Body: fact}
 	if scope := c.scopeOf(); scope.Project != "" {
-		node.Key = scope.Project + "/notes/" + slug(title)
+		node.Key = factKey(scope.Project, title)
 		_ = contracts.RecordShared(ctx, c.mem, scope, node)
 		return
 	}
-	node.Key = c.session + "/notes/" + slug(title)
+	node.Key = factKey(c.session, title)
 	_ = c.mem.Record(ctx, node)
 }
 
@@ -124,6 +126,12 @@ func (c *Curator) frame(digest string) string {
 	}
 	b.WriteString("\n</memory>")
 	return b.String()
+}
+
+func factKey(prefix, title string) string {
+	sum := fnv.New64a()
+	_, _ = sum.Write([]byte(title))
+	return prefix + "/notes/" + slug(title) + "-" + strconv.FormatUint(sum.Sum64(), 16)
 }
 
 // slug folds a fact head into a stable, filesystem-safe key segment: lowercase,
