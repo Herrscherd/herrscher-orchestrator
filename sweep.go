@@ -66,7 +66,7 @@ func (c *Curator) sweepNode(ctx context.Context, node contracts.Node, now time.T
 	if err := c.mem.Record(ctx, node); err != nil {
 		return err
 	}
-	c.transitions = append(c.transitions, Transition{Key: node.Key, From: cur, To: next, Kind: "sweep"})
+	c.transitions = append(c.transitions, Transition{Key: node.Key, From: cur, To: next, Kind: TransitionSweep})
 	return nil
 }
 
@@ -74,5 +74,5 @@ func lastSeenStamp(node contracts.Node) string {
 	if stamp := node.Meta[contracts.MetaLastSeen]; stamp != "" {
 		return stamp
 	}
-	return node.Meta["capturedAt"]
+	return node.Meta[metaCapturedAt]
 }

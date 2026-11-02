@@ -100,7 +100,7 @@ func Restore(ctx context.Context, mem contracts.Memory, key string, opts ...Rest
 }
 
 // Restore reactivates key over l's Memory and, on success, appends a
-// Transition{Kind:"restore"} to the pass's audit trail, surfaced in the next
+// Transition{Kind:TransitionRestore} to the pass's audit trail, surfaced in the next
 // report if Consolidate runs before the field resets, or inspectable directly
 // via l.transitions since Restore is typically called out of band between
 // passes. The transition's From is the node's real prior state, not an
@@ -109,7 +109,7 @@ func (l *Learner) Restore(ctx context.Context, key string, opts ...RestoreOption
 	prior, err := Restore(ctx, l.mem, key, opts...)
 	if err == nil {
 		l.mu.Lock()
-		l.transitions = append(l.transitions, Transition{Key: key, From: prior, To: contracts.StateActive, Kind: "restore"})
+		l.transitions = append(l.transitions, Transition{Key: key, From: prior, To: contracts.StateActive, Kind: TransitionRestore})
 		l.mu.Unlock()
 	}
 	return err

@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"log/slog"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
@@ -34,6 +33,14 @@ type Merger interface {
 	Merge(ctx context.Context, cands []contracts.Node) ([]Umbrella, error)
 }
 
+type mergeTarget int
+
+const (
+	mergeTargetStale mergeTarget = iota + 1
+	mergeTargetActive
+	mergeTargetAll
+)
+
 // SetMerge configures the G2 semantic-merge pass. minNodes <= 0 disables it;
 // maxNodes <= 0 falls back to defaultMergeMax; an unrecognised target falls back
 // to "stale".
@@ -43,11 +50,17 @@ func (l *Learner) SetMerge(minNodes, maxNodes int, target string) {
 		maxNodes = defaultMergeMax
 	}
 	l.mergeMax = maxNodes
+	l.mergeTarget = parseMergeTarget(target)
+}
+
+func parseMergeTarget(target string) mergeTarget {
 	switch target {
-	case "all", "active", "stale":
-		l.mergeTarget = target
+	case "all":
+		return mergeTargetAll
+	case "active":
+		return mergeTargetActive
 	default:
-		l.mergeTarget = "stale"
+		return mergeTargetStale
 	}
 }
 
@@ -97,7 +110,7 @@ func mergeGroups(nodes []contracts.Node, eligible func(contracts.Node) bool) map
 func (l *Learner) existingKeys(ctx context.Context, nodes []contracts.Node) map[string]bool {
 	collisionSource := nodes
 	if all, err := l.mem.Search(ctx, contracts.Query{IncludeArchived: true}); err != nil {
-		slog.Warn("memory: merge collision set degraded to live nodes", "err", err)
+		l.log.Warn("memory: merge collision set degraded to live nodes", "err", err)
 	} else {
 		collisionSource = all
 	}
@@ -117,7 +130,7 @@ func (l *Learner) mergeDomain(ctx context.Context, merger Merger, domain string,
 	}
 	umbrellas, err := merger.Merge(ctx, group)
 	if err != nil {
-		slog.Warn("memory: merge group failed", "domain", domain, "size", len(group), "err", err)
+		l.log.Warn("memory: merge group failed", "domain", domain, "size", len(group), "err", err)
 		return err
 	}
 	var firstErr error
@@ -145,13 +158,13 @@ func (l *Learner) mergeEligible(node contracts.Node) bool {
 		state = contracts.StateActive
 	}
 	switch l.mergeTarget {
-	case "all":
+	case mergeTargetAll:
 		return state != contracts.StateArchived
-	case "active":
+	case mergeTargetActive:
 		return state == contracts.StateActive
-	default:
-		return state == contracts.StateStale
+	case mergeTargetStale:
 	}
+	return state == contracts.StateStale
 }
 
 func (l *Learner) applyUmbrella(ctx context.Context, umbrella Umbrella, group []contracts.Node, existing map[string]bool) error {
@@ -166,7 +179,7 @@ func (l *Learner) applyUmbrella(ctx context.Context, umbrella Umbrella, group []
 		return err
 	}
 	existing[umbrella.Node.Key] = true
-	l.transitions = append(l.transitions, Transition{Key: umbrella.Node.Key, From: "", To: contracts.StateActive, Kind: "merge"})
+	l.transitions = append(l.transitions, Transition{Key: umbrella.Node.Key, From: "", To: contracts.StateActive, Kind: TransitionMerge})
 	return l.archiveMerged(ctx, umbrella, byKey)
 }
 
@@ -198,7 +211,7 @@ func (l *Learner) archiveOriginal(ctx context.Context, umbrella Umbrella, key st
 	if err := l.mem.Record(ctx, orig); err != nil {
 		return err
 	}
-	l.transitions = append(l.transitions, Transition{Key: key, From: prevState, To: contracts.StateArchived, Kind: "merge"})
+	l.transitions = append(l.transitions, Transition{Key: key, From: prevState, To: contracts.StateArchived, Kind: TransitionMerge})
 	return l.mem.Links(ctx, key, umbrella.Node.Key, "merged-into")
 }
 
@@ -229,7 +242,7 @@ func (l *Learner) validUmbrella(umbrella Umbrella, byKey map[string]contracts.No
 		}
 	}
 	if reason != "" {
-		slog.Warn("memory: rejecting invalid umbrella",
+		l.log.Warn("memory: rejecting invalid umbrella",
 			"key", umbrella.Node.Key, "reason", reason, "merged", len(umbrella.Merged))
 		return false
 	}

@@ -318,12 +318,12 @@ func TestSetMergeDefaults(t *testing.T) {
 	if l.mergeMax != defaultMergeMax {
 		t.Errorf("mergeMax=%d, want %d", l.mergeMax, defaultMergeMax)
 	}
-	if l.mergeTarget != "stale" {
-		t.Errorf("mergeTarget=%q, want stale", l.mergeTarget)
+	if l.mergeTarget != mergeTargetStale {
+		t.Errorf("mergeTarget=%v, want stale", l.mergeTarget)
 	}
 	l.SetMerge(2, 10, "active")
-	if l.mergeMax != 10 || l.mergeTarget != "active" || l.mergeMin != 2 {
-		t.Errorf("SetMerge did not apply valid values: min=%d max=%d target=%q", l.mergeMin, l.mergeMax, l.mergeTarget)
+	if l.mergeMax != 10 || l.mergeTarget != mergeTargetActive || l.mergeMin != 2 {
+		t.Errorf("SetMerge did not apply valid values: min=%d max=%d target=%v", l.mergeMin, l.mergeMax, l.mergeTarget)
 	}
 }
 

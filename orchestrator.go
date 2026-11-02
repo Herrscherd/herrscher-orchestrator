@@ -23,14 +23,25 @@ const (
 	maxReplyChars   = 200
 )
 
+// TransitionKind names the curator pass that made a Transition.
+type TransitionKind string
+
+// Transition kinds: TransitionSweep for G3 staleness, TransitionMerge for G2
+// umbrella folds, and TransitionRestore for an explicit reactivation.
+const (
+	TransitionSweep   TransitionKind = "sweep"
+	TransitionMerge   TransitionKind = "merge"
+	TransitionRestore TransitionKind = "restore"
+)
+
 // Transition is one state change a curator pass made to one node, for the
-// audit report. Kind is "sweep" (G3 staleness), "merge" (G2 umbrella-fold), or
-// "restore" (an explicit reactivation).
+// audit report. Kind is TransitionSweep (G3 staleness), TransitionMerge (G2
+// umbrella-fold), or TransitionRestore (an explicit reactivation).
 type Transition struct {
 	Key  string
 	From string
 	To   string
-	Kind string
+	Kind TransitionKind
 }
 
 // Curator is the default Orchestrator. With a nil Memory it still answers, just

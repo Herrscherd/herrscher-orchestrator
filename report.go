@@ -43,13 +43,13 @@ func (l *Learner) report(ctx context.Context) error {
 }
 
 func renderReport(stamp string, transitions []Transition) string {
-	counts := make(map[string]int)
+	counts := make(map[TransitionKind]int)
 	for _, tr := range transitions {
 		counts[tr.Kind]++
 	}
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "# consolidate report %s\n\n", stamp)
-	fmt.Fprintf(&builder, "sweep=%d merge=%d restore=%d\n\n", counts["sweep"], counts["merge"], counts["restore"])
+	fmt.Fprintf(&builder, "sweep=%d merge=%d restore=%d\n\n", counts[TransitionSweep], counts[TransitionMerge], counts[TransitionRestore])
 	builder.WriteString("| key | kind | from | to |\n")
 	builder.WriteString("|---|---|---|---|\n")
 	for _, tr := range transitions {
