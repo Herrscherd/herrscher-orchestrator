@@ -37,62 +37,7 @@ func init() {
 				{Key: "learned-skills", Env: "MEMORY_LEARNED_SKILLS", Help: `when true/1/on/yes, the agent may write its own skills with <skill name="...">, the host projects them into the session worktree as SKILL.md, and using one keeps it alive; sharing one with the project's other agents still needs an explicit approval (default off)`, Required: false},
 			},
 		},
-		Orchestrator: func(ctx context.Context, cfg contracts.PluginConfig, mem contracts.Memory) (contracts.Orchestrator, error) {
-			var scope contracts.MemoryScope
-			if p := cfg.Get("memory.project"); p != "" {
-				scope.Project = contracts.ProjectKey(p)
-			}
-			if a := cfg.Get("memory.agent"); a != "" {
-				scope.Agent = contracts.AgentKey(a)
-			}
-			stale := staleDuration(cfg.Get("stale-days"), defaultStaleDays)
-			archive := staleDuration(cfg.Get("archive-days"), defaultArchiveDays)
-			learnedSkills := boolSetting(cfg.Get("learned-skills"), false)
-			logger := slog.Default()
-			if ex := lookupExtractor(cfg.Get("memory.extractor")); ex != nil {
-				every, err := intSetting(cfg, "memory.consolidate-every", 0)
-				if err != nil {
-					return nil, err
-				}
-				l := NewLearner(mem, cfg.Get("session"), scope, ex, cfg.Get("memory.journal"), every)
-				l.SetLogger(logger)
-				l.SetStaleness(stale, archive)
-				mergeMin, err := intSetting(cfg, "merge-min-nodes", 0)
-				if err != nil {
-					return nil, err
-				}
-				mergeMax, err := intSetting(cfg, "merge-max", 0)
-				if err != nil {
-					return nil, err
-				}
-				l.SetMerge(mergeMin, mergeMax, cfg.Get("merge-target"))
-				reportEnabled := boolSetting(cfg.Get("report-enabled"), true)
-				l.SetReport(reportEnabled, cfg.Get("report-prefix"))
-				promoteDays, err := intSetting(cfg, "promote-min-age-days", 0)
-				if err != nil {
-					return nil, err
-				}
-				l.SetPromote(time.Duration(promoteDays) * 24 * time.Hour)
-				idleDays, err := intSetting(cfg, "idle-days", 0)
-				if err != nil {
-					return nil, err
-				}
-				idleHours := 2
-				if v, err := strconv.Atoi(cfg.Get("idle-hours")); err == nil {
-					idleHours = v
-				}
-				l.SetIdle(idleDays, idleHours)
-				rawArchive := boolSetting(cfg.Get("raw-archive"), false)
-				l.SetRawArchive(rawArchive)
-				l.SetLearnedSkills(learnedSkills)
-				return l, nil
-			}
-			c := NewScoped(mem, cfg.Get("session"), scope)
-			c.SetLogger(logger)
-			c.SetStaleness(stale, archive)
-			c.SetLearnedSkills(learnedSkills)
-			return c, nil
-		},
+		Orchestrator: newOrchestrator,
 	})
 }
 
@@ -141,4 +86,76 @@ func boolSetting(v string, def bool) bool {
 	default:
 		return def
 	}
+}
+
+func newOrchestrator(ctx context.Context, cfg contracts.PluginConfig, mem contracts.Memory) (contracts.Orchestrator, error) {
+	var scope contracts.MemoryScope
+	if p := cfg.Get("memory.project"); p != "" {
+		scope.Project = contracts.ProjectKey(p)
+	}
+	if a := cfg.Get("memory.agent"); a != "" {
+		scope.Agent = contracts.AgentKey(a)
+	}
+	if ex := lookupExtractor(cfg.Get("memory.extractor")); ex != nil {
+		return newLearnerFromConfig(cfg, mem, scope, ex)
+	}
+	stale, archive := stalenessFromConfig(cfg)
+	c := NewScoped(mem, cfg.Get("session"), scope)
+	c.SetLogger(slog.Default())
+	c.SetStaleness(stale, archive)
+	c.SetLearnedSkills(boolSetting(cfg.Get("learned-skills"), false))
+	return c, nil
+}
+
+func newLearnerFromConfig(cfg contracts.PluginConfig, mem contracts.Memory, scope contracts.MemoryScope, ex Extractor) (contracts.Orchestrator, error) {
+	every, err := intSetting(cfg, "memory.consolidate-every", 0)
+	if err != nil {
+		return nil, err
+	}
+	l := NewLearner(mem, cfg.Get("session"), scope, ex, cfg.Get("memory.journal"), every)
+	l.SetLogger(slog.Default())
+	stale, archive := stalenessFromConfig(cfg)
+	l.SetStaleness(stale, archive)
+	if err := configureLearner(l, cfg); err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+func configureLearner(l *Learner, cfg contracts.PluginConfig) error {
+	mergeMin, err := intSetting(cfg, "merge-min-nodes", 0)
+	if err != nil {
+		return err
+	}
+	mergeMax, err := intSetting(cfg, "merge-max", 0)
+	if err != nil {
+		return err
+	}
+	l.SetMerge(mergeMin, mergeMax, cfg.Get("merge-target"))
+	l.SetReport(boolSetting(cfg.Get("report-enabled"), true), cfg.Get("report-prefix"))
+	promoteDays, err := intSetting(cfg, "promote-min-age-days", 0)
+	if err != nil {
+		return err
+	}
+	l.SetPromote(time.Duration(promoteDays) * 24 * time.Hour)
+	idleDays, err := intSetting(cfg, "idle-days", 0)
+	if err != nil {
+		return err
+	}
+	l.SetIdle(idleDays, idleHoursFromConfig(cfg))
+	l.SetRawArchive(boolSetting(cfg.Get("raw-archive"), false))
+	l.SetLearnedSkills(boolSetting(cfg.Get("learned-skills"), false))
+	return nil
+}
+
+func idleHoursFromConfig(cfg contracts.PluginConfig) int {
+	if v, err := strconv.Atoi(cfg.Get("idle-hours")); err == nil {
+		return v
+	}
+	return 2
+}
+
+func stalenessFromConfig(cfg contracts.PluginConfig) (stale, archive time.Duration) {
+	return staleDuration(cfg.Get("stale-days"), defaultStaleDays),
+		staleDuration(cfg.Get("archive-days"), defaultArchiveDays)
 }

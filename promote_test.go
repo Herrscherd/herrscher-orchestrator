@@ -138,48 +138,50 @@ func TestPromoteHappyPath(t *testing.T) {
 	if err := l.Promote(context.Background()); err != nil {
 		t.Fatalf("Promote: %v", err)
 	}
-	var copy *contracts.Node
-	for i := range mem.records {
-		if mem.records[i].Key == "projects/p/skills/x" {
-			copy = &mem.records[i]
-		}
-	}
-	if copy == nil {
+	assertSharedCopy(t, mem, orig.Body)
+	assertOriginalLabeled(t, mem, orig.Meta[contracts.MetaLastSeen])
+	assertPromotedLink(t, mem)
+}
+
+func assertSharedCopy(t *testing.T, mem *mergeMem, body string) {
+	t.Helper()
+	shared := lastRecord(mem, "projects/p/skills/x")
+	if shared == nil {
 		t.Fatal("shared copy not recorded under projects/p/skills/x")
 	}
-	if copy.Body != "retry with backoff" {
-		t.Errorf("copy body = %q, want the original body", copy.Body)
+	if shared.Body != body {
+		t.Errorf("copy body = %q, want the original body", shared.Body)
 	}
-	if copy.Meta["promotedFrom"] != "agents/a/skills/x" {
-		t.Errorf("copy promotedFrom = %q, want the original key", copy.Meta["promotedFrom"])
+	if shared.Meta["promotedFrom"] != "agents/a/skills/x" {
+		t.Errorf("copy promotedFrom = %q, want the original key", shared.Meta["promotedFrom"])
 	}
-	if copy.Meta[MetaPromotedTo] != "" {
-		t.Errorf("copy must not itself carry promotedTo: %q", copy.Meta[MetaPromotedTo])
+	if shared.Meta[MetaPromotedTo] != "" {
+		t.Errorf("copy must not itself carry promotedTo: %q", shared.Meta[MetaPromotedTo])
 	}
-	var labeled *contracts.Node
-	for i := range mem.records {
-		if mem.records[i].Key == "agents/a/skills/x" {
-			labeled = &mem.records[i]
-		}
-	}
+}
+
+func assertOriginalLabeled(t *testing.T, mem *mergeMem, lastSeen string) {
+	t.Helper()
+	labeled := lastRecord(mem, "agents/a/skills/x")
 	if labeled == nil || labeled.Meta[MetaPromotedTo] != "projects/p/skills/x" {
 		t.Fatalf("original not labeled with promotedTo: %+v", labeled)
 	}
 	if labeled.Meta[contracts.MetaState] != contracts.StateActive {
 		t.Errorf("original state changed to %q", labeled.Meta[contracts.MetaState])
 	}
-	if labeled.Meta[contracts.MetaLastSeen] != orig.Meta[contracts.MetaLastSeen] {
+	if labeled.Meta[contracts.MetaLastSeen] != lastSeen {
 		t.Errorf("original lastSeen bumped: %q", labeled.Meta[contracts.MetaLastSeen])
 	}
-	var linked bool
+}
+
+func assertPromotedLink(t *testing.T, mem *mergeMem) {
+	t.Helper()
 	for _, ln := range mem.links {
 		if ln == [3]string{"agents/a/skills/x", "projects/p/skills/x", "promoted-to"} {
-			linked = true
+			return
 		}
 	}
-	if !linked {
-		t.Errorf("missing promoted-to link: %+v", mem.links)
-	}
+	t.Errorf("missing promoted-to link: %+v", mem.links)
 }
 
 func TestPromoteScopeIsolation(t *testing.T) {

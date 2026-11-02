@@ -72,19 +72,32 @@ func (l *Learner) Merge(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	groups := mergeGroups(nodes, l.mergeEligible)
+	existing := l.existingKeys(ctx, nodes)
+	var firstErr error
+	for domain, group := range groups {
+		if err := l.mergeDomain(ctx, m, domain, group, existing); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func mergeGroups(nodes []contracts.Node, eligible func(contracts.Node) bool) map[string][]contracts.Node {
 	groups := map[string][]contracts.Node{}
 	for _, n := range nodes {
-		if n.Meta[MetaMergedInto] != "" {
-			continue
-		}
-		if !l.mergeEligible(n) {
+		if n.Meta[MetaMergedInto] != "" || !eligible(n) {
 			continue
 		}
 		groups[n.Meta["domain"]] = append(groups[n.Meta["domain"]], n)
 	}
+	return groups
+}
+
+func (l *Learner) existingKeys(ctx context.Context, nodes []contracts.Node) map[string]bool {
 	collisionSource := nodes
-	if all, aerr := l.mem.Search(ctx, contracts.Query{IncludeArchived: true}); aerr != nil {
-		slog.Warn("memory: merge collision set degraded to live nodes", "err", aerr)
+	if all, err := l.mem.Search(ctx, contracts.Query{IncludeArchived: true}); err != nil {
+		slog.Warn("memory: merge collision set degraded to live nodes", "err", err)
 	} else {
 		collisionSource = all
 	}
@@ -92,26 +105,25 @@ func (l *Learner) Merge(ctx context.Context) error {
 	for _, n := range collisionSource {
 		existing[n.Key] = true
 	}
+	return existing
+}
+
+func (l *Learner) mergeDomain(ctx context.Context, m Merger, domain string, group []contracts.Node, existing map[string]bool) error {
+	if len(group) < l.mergeMin {
+		return nil
+	}
+	if len(group) > l.mergeMax {
+		group = group[:l.mergeMax]
+	}
+	umbrellas, err := m.Merge(ctx, group)
+	if err != nil {
+		slog.Warn("memory: merge group failed", "domain", domain, "size", len(group), "err", err)
+		return err
+	}
 	var firstErr error
-	for domain, group := range groups {
-		if len(group) < l.mergeMin {
-			continue
-		}
-		if len(group) > l.mergeMax {
-			group = group[:l.mergeMax]
-		}
-		umbrellas, merr := m.Merge(ctx, group)
-		if merr != nil {
-			slog.Warn("memory: merge group failed", "domain", domain, "size", len(group), "err", merr)
-			if firstErr == nil {
-				firstErr = merr
-			}
-			continue
-		}
-		for _, u := range umbrellas {
-			if aerr := l.applyUmbrella(ctx, u, group, existing); aerr != nil && firstErr == nil {
-				firstErr = aerr
-			}
+	for _, u := range umbrellas {
+		if err := l.applyUmbrella(ctx, u, group, existing); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
 	return firstErr
@@ -155,6 +167,10 @@ func (l *Learner) applyUmbrella(ctx context.Context, u Umbrella, group []contrac
 	}
 	existing[u.Node.Key] = true
 	l.transitions = append(l.transitions, Transition{Key: u.Node.Key, From: "", To: contracts.StateActive, Kind: "merge"})
+	return l.archiveMerged(ctx, u, byKey)
+}
+
+func (l *Learner) archiveMerged(ctx context.Context, u Umbrella, byKey map[string]contracts.Node) error {
 	var firstErr error
 	applied := make(map[string]bool, len(u.Merged))
 	for _, k := range u.Merged {
@@ -162,28 +178,28 @@ func (l *Learner) applyUmbrella(ctx context.Context, u Umbrella, group []contrac
 			continue
 		}
 		applied[k] = true
-		orig := byKey[k]
-		prevState := orig.Meta[contracts.MetaState]
-		if prevState == "" {
-			prevState = contracts.StateActive
-		}
-		if orig.Meta == nil {
-			orig.Meta = map[string]string{}
-		}
-		orig.Meta[MetaMergedInto] = u.Node.Key
-		orig.Meta[contracts.MetaState] = contracts.StateArchived
-		if err := l.mem.Record(ctx, orig); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		l.transitions = append(l.transitions, Transition{Key: k, From: prevState, To: contracts.StateArchived, Kind: "merge"})
-		if err := l.mem.Links(ctx, k, u.Node.Key, "merged-into"); err != nil && firstErr == nil {
+		if err := l.archiveOriginal(ctx, u, k, byKey[k]); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	return firstErr
+}
+
+func (l *Learner) archiveOriginal(ctx context.Context, u Umbrella, k string, orig contracts.Node) error {
+	prevState := orig.Meta[contracts.MetaState]
+	if prevState == "" {
+		prevState = contracts.StateActive
+	}
+	if orig.Meta == nil {
+		orig.Meta = map[string]string{}
+	}
+	orig.Meta[MetaMergedInto] = u.Node.Key
+	orig.Meta[contracts.MetaState] = contracts.StateArchived
+	if err := l.mem.Record(ctx, orig); err != nil {
+		return err
+	}
+	l.transitions = append(l.transitions, Transition{Key: k, From: prevState, To: contracts.StateArchived, Kind: "merge"})
+	return l.mem.Links(ctx, k, u.Node.Key, "merged-into")
 }
 
 func (l *Learner) validUmbrella(u Umbrella, byKey map[string]contracts.Node, existing map[string]bool) bool {

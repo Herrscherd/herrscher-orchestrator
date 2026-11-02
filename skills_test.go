@@ -98,6 +98,11 @@ func TestReactWritesSkillNodePrivately(t *testing.T) {
 	if !strings.Contains(out, "voilà") || !strings.Contains(out, "fini") {
 		t.Errorf("reply lost its prose: %q", out)
 	}
+	assertSkillLinkedPrivately(t, m)
+}
+
+func assertSkillLinkedPrivately(t *testing.T, m *skillMem) {
+	t.Helper()
 	linked := false
 	for _, l := range m.links {
 		if l[0] == "agents/a" && l[1] == "agents/a/skills/retry-http" {

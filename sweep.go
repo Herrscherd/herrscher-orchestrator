@@ -28,45 +28,50 @@ func (c *Curator) Sweep(ctx context.Context) error {
 	now := c.now().UTC()
 	var firstErr error
 	for _, n := range nodes {
-		if n.Meta[MetaMergedInto] != "" {
-			continue
+		if err := c.sweepNode(ctx, n, now); err != nil && firstErr == nil {
+			firstErr = err
 		}
-		if n.Kind == ReportKind {
-			continue
-		}
-		stamp := n.Meta[contracts.MetaLastSeen]
-		if stamp == "" {
-			stamp = n.Meta["capturedAt"]
-		}
-		if stamp == "" {
-			continue
-		}
-		lastSeen, err := time.Parse(time.RFC3339, stamp)
-		if err != nil {
-			continue
-		}
-		next := contracts.NextState(lastSeen, now, c.staleAfter, c.archiveAfter)
-		cur := n.Meta[contracts.MetaState]
-		if cur == "" {
-			cur = contracts.StateActive
-		}
-		if next == cur {
-			continue
-		}
-		if n.Meta == nil {
-			n.Meta = map[string]string{}
-		}
-		n.Meta[contracts.MetaState] = next
-		if n.Meta[contracts.MetaLastSeen] == "" {
-			n.Meta[contracts.MetaLastSeen] = stamp
-		}
-		if err := c.mem.Record(ctx, n); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		c.transitions = append(c.transitions, Transition{Key: n.Key, From: cur, To: next, Kind: "sweep"})
 	}
 	return firstErr
+}
+
+func (c *Curator) sweepNode(ctx context.Context, n contracts.Node, now time.Time) error {
+	if n.Meta[MetaMergedInto] != "" || n.Kind == ReportKind {
+		return nil
+	}
+	stamp := lastSeenStamp(n)
+	if stamp == "" {
+		return nil
+	}
+	lastSeen, err := time.Parse(time.RFC3339, stamp)
+	if err != nil {
+		return nil
+	}
+	next := contracts.NextState(lastSeen, now, c.staleAfter, c.archiveAfter)
+	cur := n.Meta[contracts.MetaState]
+	if cur == "" {
+		cur = contracts.StateActive
+	}
+	if next == cur {
+		return nil
+	}
+	if n.Meta == nil {
+		n.Meta = map[string]string{}
+	}
+	n.Meta[contracts.MetaState] = next
+	if n.Meta[contracts.MetaLastSeen] == "" {
+		n.Meta[contracts.MetaLastSeen] = stamp
+	}
+	if err := c.mem.Record(ctx, n); err != nil {
+		return err
+	}
+	c.transitions = append(c.transitions, Transition{Key: n.Key, From: cur, To: next, Kind: "sweep"})
+	return nil
+}
+
+func lastSeenStamp(n contracts.Node) string {
+	if stamp := n.Meta[contracts.MetaLastSeen]; stamp != "" {
+		return stamp
+	}
+	return n.Meta["capturedAt"]
 }

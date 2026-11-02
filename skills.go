@@ -113,38 +113,55 @@ func (c *Curator) LearnedSkills(ctx context.Context) ([]contracts.Node, error) {
 		return nil, nil
 	}
 	scope := c.scopeOf()
-	var (
-		sg  contracts.Subgraph
-		err error
-	)
-	switch {
-	case scope.Project != "":
-		sg, err = contracts.RecallScoped(ctx, c.mem, scope, 1)
-	case scope.Agent != "":
-		sg, err = c.mem.Recall(ctx, scope.Agent, 1)
-	default:
+	if scope.Project == "" && scope.Agent == "" {
 		return nil, nil
 	}
+	nodes, err := c.recallSkills(ctx, scope)
 	if err != nil {
 		return nil, err
 	}
-	var private, shared []contracts.Node
-	for _, n := range sg.Nodes {
-		if n.Kind != contracts.KindSkill {
+	private, shared := partitionSkills(nodes, scope.Agent)
+	out, seen := dedupeSkills(private, shared)
+	c.projectedMu.Lock()
+	c.projected = seen
+	c.projectedMu.Unlock()
+	return out, nil
+}
+
+func (c *Curator) recallSkills(ctx context.Context, scope contracts.MemoryScope) ([]contracts.Node, error) {
+	if scope.Project != "" {
+		sg, err := contracts.RecallScoped(ctx, c.mem, scope, 1)
+		return sg.Nodes, err
+	}
+	sg, err := c.mem.Recall(ctx, scope.Agent, 1)
+	return sg.Nodes, err
+}
+
+func partitionSkills(nodes []contracts.Node, agent string) (private, shared []contracts.Node) {
+	for _, n := range nodes {
+		if !isActiveSkill(n) {
 			continue
 		}
-		if s := n.Meta[contracts.MetaState]; s != "" && s != contracts.StateActive {
-			continue
-		}
-		if scope.Agent != "" && strings.HasPrefix(n.Key, scope.Agent+"/") {
+		if agent != "" && strings.HasPrefix(n.Key, agent+"/") {
 			private = append(private, n)
 			continue
 		}
 		shared = append(shared, n)
 	}
+	return private, shared
+}
+
+func isActiveSkill(n contracts.Node) bool {
+	if n.Kind != contracts.KindSkill {
+		return false
+	}
+	state := n.Meta[contracts.MetaState]
+	return state == "" || state == contracts.StateActive
+}
+
+func dedupeSkills(private, shared []contracts.Node) ([]contracts.Node, map[string]string) {
 	sort.Slice(private, func(i, j int) bool { return private[i].Key < private[j].Key })
 	sort.Slice(shared, func(i, j int) bool { return shared[i].Key < shared[j].Key })
-
 	seen := make(map[string]string, len(private)+len(shared))
 	out := make([]contracts.Node, 0, len(private)+len(shared))
 	for _, n := range append(private, shared...) {
@@ -155,10 +172,7 @@ func (c *Curator) LearnedSkills(ctx context.Context) ([]contracts.Node, error) {
 		seen[name] = n.Key
 		out = append(out, n)
 	}
-	c.projectedMu.Lock()
-	c.projected = seen
-	c.projectedMu.Unlock()
-	return out, nil
+	return out, seen
 }
 
 // SkillUsed refreshes lastSeen on each named skill. The host calls it with the

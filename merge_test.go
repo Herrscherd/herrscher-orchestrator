@@ -117,45 +117,66 @@ func TestMergeHappyPathWritesAndArchives(t *testing.T) {
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
-	var sawUmbrella bool
+	assertUmbrellaRecorded(t, mem)
+	assertArchivedOriginal(t, mem, "facts/a")
+	assertArchivedOriginal(t, mem, "facts/b")
+	assertLastSeenKept(t, mem, "facts/a", "2026-01-01T00:00:00Z")
+	assertMergedIntoLinks(t, mem, "facts/a", "facts/b")
+}
+
+func assertUmbrellaRecorded(t *testing.T, mem *mergeMem) {
+	t.Helper()
 	for _, r := range mem.records {
 		if r.Key == "facts/umbrella" && r.Body == "fused" {
-			sawUmbrella = true
+			return
 		}
 	}
-	if !sawUmbrella {
-		t.Fatal("umbrella node was not recorded")
-	}
-	for _, k := range []string{"facts/a", "facts/b"} {
-		var got *contracts.Node
-		for i := range mem.records {
-			if mem.records[i].Key == k {
-				got = &mem.records[i]
-			}
-		}
-		if got == nil {
-			t.Fatalf("original %s not re-recorded", k)
-		}
-		if got.Meta[MetaMergedInto] != "facts/umbrella" {
-			t.Errorf("%s: mergedInto=%q, want facts/umbrella", k, got.Meta[MetaMergedInto])
-		}
-		if got.Meta[contracts.MetaState] != contracts.StateArchived {
-			t.Errorf("%s: state=%q, want archived", k, got.Meta[contracts.MetaState])
-		}
-	}
+	t.Fatal("umbrella node was not recorded")
+}
+
+func lastRecord(mem *mergeMem, key string) *contracts.Node {
+	var got *contracts.Node
 	for i := range mem.records {
-		if mem.records[i].Key == "facts/a" && mem.records[i].Meta[contracts.MetaLastSeen] != "2026-01-01T00:00:00Z" {
-			t.Errorf("facts/a lastSeen changed to %q", mem.records[i].Meta[contracts.MetaLastSeen])
+		if mem.records[i].Key == key {
+			got = &mem.records[i]
 		}
 	}
-	want := map[string]bool{"facts/a": false, "facts/b": false}
+	return got
+}
+
+func assertArchivedOriginal(t *testing.T, mem *mergeMem, key string) {
+	t.Helper()
+	got := lastRecord(mem, key)
+	if got == nil {
+		t.Fatalf("original %s not re-recorded", key)
+	}
+	if got.Meta[MetaMergedInto] != "facts/umbrella" {
+		t.Errorf("%s: mergedInto=%q, want facts/umbrella", key, got.Meta[MetaMergedInto])
+	}
+	if got.Meta[contracts.MetaState] != contracts.StateArchived {
+		t.Errorf("%s: state=%q, want archived", key, got.Meta[contracts.MetaState])
+	}
+}
+
+func assertLastSeenKept(t *testing.T, mem *mergeMem, key, want string) {
+	t.Helper()
+	for i := range mem.records {
+		if mem.records[i].Key == key && mem.records[i].Meta[contracts.MetaLastSeen] != want {
+			t.Errorf("%s lastSeen changed to %q", key, mem.records[i].Meta[contracts.MetaLastSeen])
+		}
+	}
+}
+
+func assertMergedIntoLinks(t *testing.T, mem *mergeMem, keys ...string) {
+	t.Helper()
+	linked := make(map[string]bool, len(keys))
 	for _, ln := range mem.links {
 		if ln[1] == "facts/umbrella" && ln[2] == "merged-into" {
-			want[ln[0]] = true
+			linked[ln[0]] = true
 		}
 	}
-	for k, ok := range want {
-		if !ok {
+	for _, k := range keys {
+		if !linked[k] {
 			t.Errorf("missing merged-into link from %s", k)
 		}
 	}
