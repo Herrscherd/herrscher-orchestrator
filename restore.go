@@ -61,7 +61,7 @@ func withClock(clock func() time.Time) RestoreOption {
 // It returns the node's state immediately before the restore (its prior
 // Meta[MetaState], or StateActive when unset), so callers can record a faithful
 // audit "from" value; the returned prior is meaningful only when err is nil.
-func Restore(ctx context.Context, mem contracts.Memory, key string, opts ...RestoreOption) (prior string, err error) {
+func Restore(ctx context.Context, mem contracts.Memory, key string, opts ...RestoreOption) (string, error) {
 	cfg := restoreConfig{clock: time.Now}
 	for _, o := range opts {
 		o(&cfg)
@@ -74,7 +74,7 @@ func Restore(ctx context.Context, mem contracts.Memory, key string, opts ...Rest
 	if n.Meta[MetaMergedInto] != "" && !cfg.force {
 		return "", ErrMergedOriginal
 	}
-	prior = n.Meta[contracts.MetaState]
+	prior := n.Meta[contracts.MetaState]
 	if prior == "" {
 		prior = contracts.StateActive
 	}

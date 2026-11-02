@@ -16,8 +16,8 @@ type budgetMem struct {
 	searches int
 }
 
-func newBudgetMem(limit int) *budgetMem {
-	return &budgetMem{nodes: map[string]contracts.Node{}, limit: limit}
+func newBudgetMem() *budgetMem {
+	return &budgetMem{nodes: map[string]contracts.Node{}, limit: 5}
 }
 
 func (m *budgetMem) Record(_ context.Context, n contracts.Node) error {
@@ -57,6 +57,7 @@ func (e *bigThenSmall) Extract(context.Context, string, string) ([]Candidate, er
 
 type shrinkingExtractor struct {
 	oneBig
+
 	to    string
 	calls int
 }
@@ -75,7 +76,7 @@ func mustScope() contracts.MemoryScope {
 }
 
 func TestPersistConsolidatesOverBudgetCandidate(t *testing.T) {
-	mem := newBudgetMem(5)
+	mem := newBudgetMem()
 	ex := &shrinkingExtractor{oneBig: oneBig{body: "0123456789"}, to: "ok"}
 	l := NewLearner(mem, "s", mustScope(), ex, "", 0)
 
@@ -98,7 +99,7 @@ func TestPersistConsolidatesOverBudgetCandidate(t *testing.T) {
 }
 
 func TestPersistEnqueuesWhenNoConsolidator(t *testing.T) {
-	mem := newBudgetMem(5)
+	mem := newBudgetMem()
 	ex := &bigThenSmall{big: "0123456789", small: "hi"}
 	l := NewLearner(mem, "s", mustScope(), ex, "", 0)
 
@@ -120,7 +121,7 @@ func TestPersistEnqueuesWhenNoConsolidator(t *testing.T) {
 }
 
 func TestPersistEnqueuesWhenConsolidatorStillTooLarge(t *testing.T) {
-	mem := newBudgetMem(5)
+	mem := newBudgetMem()
 	ex := &shrinkingExtractor{oneBig: oneBig{body: "0123456789"}, to: ""}
 	l := NewLearner(mem, "s", mustScope(), ex, "", 0)
 
@@ -139,7 +140,7 @@ func TestPersistEnqueuesWhenConsolidatorStillTooLarge(t *testing.T) {
 }
 
 func TestPendingDrainedOnLaterPass(t *testing.T) {
-	mem := newBudgetMem(5)
+	mem := newBudgetMem()
 	ex1 := &oneBig{body: "0123456789"}
 	l := NewLearner(mem, "s", mustScope(), ex1, "", 0)
 	if err := l.Consolidate(context.Background()); err != nil {
@@ -158,10 +159,10 @@ func TestPendingDrainedOnLaterPass(t *testing.T) {
 }
 
 func TestQueueDedupsByKey(t *testing.T) {
-	mem := newBudgetMem(5)
+	mem := newBudgetMem()
 	ex := &oneBig{body: "0123456789"}
 	l := NewLearner(mem, "s", mustScope(), ex, "", 0)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if err := l.Consolidate(context.Background()); err != nil {
 			t.Fatal(err)
 		}
@@ -179,7 +180,7 @@ func (e *emptyingExtractor) Consolidate(_ context.Context, over contracts.Node, 
 }
 
 func TestPersistRejectsEmptyConsolidatorResult(t *testing.T) {
-	mem := newBudgetMem(5)
+	mem := newBudgetMem()
 	ex := &emptyingExtractor{oneBig: oneBig{body: "0123456789"}}
 	l := NewLearner(mem, "s", mustScope(), ex, "", 0)
 	if err := l.Consolidate(context.Background()); err != nil {
@@ -194,7 +195,7 @@ func TestPersistRejectsEmptyConsolidatorResult(t *testing.T) {
 }
 
 func TestSweepRunsAfterEnqueue(t *testing.T) {
-	mem := newBudgetMem(5)
+	mem := newBudgetMem()
 	ex := &oneBig{body: "0123456789"}
 	l := NewLearner(mem, "s", mustScope(), ex, "", 0)
 	if err := l.Consolidate(context.Background()); err != nil {
@@ -211,7 +212,7 @@ func TestEnqueueEmitsWarn(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	defer slog.SetDefault(prev)
 
-	mem := newBudgetMem(5)
+	mem := newBudgetMem()
 	l := NewLearner(mem, "s", mustScope(), &oneBig{body: "0123456789"}, "", 0)
 	if err := l.Consolidate(context.Background()); err != nil {
 		t.Fatalf("Consolidate: %v", err)

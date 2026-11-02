@@ -48,11 +48,11 @@ func (f *fakeMem) Links(_ context.Context, from, to, rel string) error {
 func (f *fakeMem) Unlink(context.Context, string, string) error { return nil }
 func (f *fakeMem) Close() error                                 { return nil }
 
-var errNotFound = &notFound{}
+var errNotFound = &notFoundError{}
 
-type notFound struct{}
+type notFoundError struct{}
 
-func (*notFound) Error() string { return "not found" }
+func (*notFoundError) Error() string { return "not found" }
 
 func TestNilMemoryIsNoOp(t *testing.T) {
 	c := New(nil, "s")
@@ -169,7 +169,7 @@ func TestObserveBoundsTranscript(t *testing.T) {
 	mem := newFake()
 	c := New(mem, "alpha")
 	ctx := context.Background()
-	for i := 0; i < maxTurns+5; i++ {
+	for range maxTurns + 5 {
 		if err := c.Observe(ctx, contracts.Prompt{Author: "a", Content: "msg"}, "r"); err != nil {
 			t.Error(err)
 		}

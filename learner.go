@@ -44,8 +44,6 @@ type Consolidator interface {
 
 var errEnqueue = errors.New("orchestrator: candidate over budget, queued for retry")
 
-var idlePollInterval = 10 * time.Minute
-
 // Learner is the richer Orchestrator that adds the learning loop on top of the
 // default Curator: it keeps the same per-turn Context/Observe behaviour and
 // implements a real Consolidate that runs an Extractor over the journal +
@@ -59,6 +57,7 @@ var idlePollInterval = 10 * time.Minute
 // body, is guarded by the lighter stampMu instead (see the field comments).
 type Learner struct {
 	*Curator
+
 	extract Extractor
 	journal string
 	every   int
@@ -89,6 +88,7 @@ type Learner struct {
 
 	stopIdle context.CancelFunc
 	idleDone chan struct{}
+	idlePoll time.Duration
 }
 
 var _ contracts.Orchestrator = (*Learner)(nil)
@@ -96,7 +96,7 @@ var _ contracts.Orchestrator = (*Learner)(nil)
 // NewLearner builds a learning orchestrator. With a nil extractor it behaves
 // exactly like the default Curator (Consolidate is a no-op).
 func NewLearner(mem contracts.Memory, session string, scope contracts.MemoryScope, ex Extractor, journal string, every int) *Learner {
-	return &Learner{Curator: NewScoped(mem, session, scope), extract: ex, journal: journal, every: every, seen: map[string]bool{}}
+	return &Learner{Curator: NewScoped(mem, session, scope), extract: ex, journal: journal, every: every, seen: map[string]bool{}, idlePoll: 10 * time.Minute}
 }
 
 // SetIdle configures the G5 inactivity trigger. sinceLastRunDays <= 0 disables
@@ -166,7 +166,7 @@ func (l *Learner) Close() error {
 }
 
 func (l *Learner) idleLoop(ctx context.Context) {
-	t := time.NewTicker(idlePollInterval)
+	t := time.NewTicker(l.idlePoll)
 	defer t.Stop()
 	for {
 		select {
@@ -392,11 +392,11 @@ func (l *Learner) readJournalTail() string {
 		return ""
 	}
 	defer func() { l.logFailure("memory: close journal failed", f.Close()) }()
-	if fi, err := f.Stat(); err == nil && fi.Size() < l.offset {
+	if fi, statErr := f.Stat(); statErr == nil && fi.Size() < l.offset {
 		l.offset = 0
 	}
 	if l.offset > 0 {
-		if _, err := f.Seek(l.offset, io.SeekStart); err != nil {
+		if _, seekErr := f.Seek(l.offset, io.SeekStart); seekErr != nil {
 			return ""
 		}
 	}

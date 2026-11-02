@@ -11,6 +11,11 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
+const (
+	defaultStaleDays   = 30
+	defaultArchiveDays = 90
+)
+
 func init() {
 	contracts.Register(contracts.Plugin{
 		Manifest: contracts.Manifest{
@@ -40,8 +45,8 @@ func init() {
 			if a := cfg.Get("memory.agent"); a != "" {
 				scope.Agent = contracts.AgentKey(a)
 			}
-			stale := staleDuration(cfg.Get("stale-days"), 30)
-			archive := staleDuration(cfg.Get("archive-days"), 90)
+			stale := staleDuration(cfg.Get("stale-days"), defaultStaleDays)
+			archive := staleDuration(cfg.Get("archive-days"), defaultArchiveDays)
 			learnedSkills := boolSetting(cfg.Get("learned-skills"), false)
 			logger := slog.Default()
 			if ex := lookupExtractor(cfg.Get("memory.extractor")); ex != nil {

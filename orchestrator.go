@@ -82,7 +82,7 @@ func (c *Curator) SetLogger(log *slog.Logger) {
 
 func (c *Curator) logFailure(msg string, err error) {
 	if err != nil {
-		c.log.Warn(msg, "error", err)
+		c.log.Warn("best-effort step failed", "step", msg, "error", err)
 	}
 }
 
@@ -204,7 +204,7 @@ func capLines(s string, n int) string {
 		return ""
 	}
 	count := 0
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		if s[i] == '\n' {
 			if count++; count == n {
 				return s[:i]

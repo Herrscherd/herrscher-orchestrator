@@ -118,11 +118,7 @@ func (l *Learner) Merge(ctx context.Context) error {
 }
 
 func mergeExcludedKind(k contracts.NodeKind) bool {
-	switch k {
-	case ReportKind, contracts.KindSession, contracts.KindTranscript:
-		return true
-	}
-	return false
+	return k == ReportKind || k == contracts.KindSession || k == contracts.KindTranscript
 }
 
 func (l *Learner) mergeEligible(n contracts.Node) bool {

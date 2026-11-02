@@ -72,10 +72,11 @@ func TestRawSurvivesLearnerRestart(t *testing.T) {
 	if len(raw) != 2 {
 		t.Fatalf("restart overwrote an earlier raw turn: want 2 nodes, got %d: %v", len(raw), raw)
 	}
-	joined := ""
+	var joinedBody strings.Builder
 	for _, n := range raw {
-		joined += n.Body + "\n"
+		joinedBody.WriteString(n.Body + "\n")
 	}
+	joined := joinedBody.String()
 	if !strings.Contains(joined, "first-run turn") || !strings.Contains(joined, "second-run turn") {
 		t.Fatalf("both runs' turns must survive, got %q", joined)
 	}

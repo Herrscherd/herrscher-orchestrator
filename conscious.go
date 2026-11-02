@@ -113,6 +113,8 @@ func factKey(prefix, title string) string {
 	return prefix + "/notes/" + slug(title) + "-" + strconv.FormatUint(sum.Sum64(), 16)
 }
 
+const maxSlugLen = 60
+
 func slug(s string) string {
 	var b strings.Builder
 	pendingSep := false
@@ -124,7 +126,7 @@ func slug(s string) string {
 			}
 			pendingSep = false
 			b.WriteRune(r)
-			if b.Len() >= 60 {
+			if b.Len() >= maxSlugLen {
 				return b.String()
 			}
 		default:

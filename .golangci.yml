@@ -185,6 +185,9 @@ linters:
         text: "^G(304|703):"
       - path: ^register\.go$
         linters: [gochecknoinits]
+      - path: ^extractor_registry\.go$
+        linters: [gochecknoglobals]
+        text: "^extractors(Mu)? is a global variable"
 
 formatters:
   enable:

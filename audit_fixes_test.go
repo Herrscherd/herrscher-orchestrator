@@ -151,6 +151,7 @@ func TestPromoteOverwritesItsOwnEarlierCopy(t *testing.T) {
 
 type curatedMem struct {
 	mergeMem
+
 	curated map[string]contracts.Node
 }
 
@@ -168,7 +169,8 @@ func TestFactKeyDistinguishesLongFactsSharingAHead(t *testing.T) {
 	if factKey("projects/p", a) == factKey("projects/p", b) {
 		t.Fatalf("two distinct facts collided on one key: %s", factKey("projects/p", a))
 	}
-	if factKey("projects/p", a) != factKey("projects/p", a) {
+	first := factKey("projects/p", a)
+	if first != factKey("projects/p", a) {
 		t.Fatal("factKey must be deterministic")
 	}
 }
@@ -218,13 +220,13 @@ func (m *lockedMem) Close() error                                        { retur
 
 func TestRestoreTransitionAppendIsSynchronised(t *testing.T) {
 	mem := &lockedMem{nodes: map[string]contracts.Node{}}
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		key := string(rune('a' + i))
 		mem.nodes[key] = contracts.Node{Key: key}
 	}
 	l := NewLearner(mem, "s", contracts.MemoryScope{}, plainExt{}, "", 0)
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

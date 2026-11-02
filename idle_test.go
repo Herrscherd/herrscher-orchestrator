@@ -152,7 +152,7 @@ func TestConcurrentObserveAndConsolidate(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 200; i++ {
+		for range 200 {
 			if err := l.Observe(context.Background(), contracts.Prompt{Author: "a", Content: "hi"}, "yo"); err != nil {
 				t.Error(err)
 			}
@@ -160,7 +160,7 @@ func TestConcurrentObserveAndConsolidate(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 200; i++ {
+		for range 200 {
 			if err := l.Consolidate(context.Background()); err != nil {
 				t.Error(err)
 			}
@@ -226,17 +226,17 @@ func (c *countExt) count() int {
 	return c.n
 }
 
-func idleTickLearner(days, hours int, now time.Time) (*Learner, *countExt) {
+func idleTickLearner(days int, now time.Time) (*Learner, *countExt) {
 	ext := &countExt{}
 	l := NewLearner(&mergeMem{}, "s", contracts.MemoryScope{}, ext, "", 0)
-	l.SetIdle(days, hours)
+	l.SetIdle(days, 2)
 	l.now = func() time.Time { return now }
 	return l, ext
 }
 
 func TestIdleTickFiresWhenDue(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
-	l, ext := idleTickLearner(7, 2, now)
+	l, ext := idleTickLearner(7, now)
 	l.lastRun = now.Add(-10 * 24 * time.Hour)
 	l.lastActivity = now.Add(-5 * time.Hour)
 	l.idleTick(context.Background())
@@ -247,7 +247,7 @@ func TestIdleTickFiresWhenDue(t *testing.T) {
 
 func TestIdleTickSkipsWhenNotDue(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
-	l, ext := idleTickLearner(7, 2, now)
+	l, ext := idleTickLearner(7, now)
 	l.lastRun = now.Add(-10 * 24 * time.Hour)
 	l.lastActivity = now.Add(-30 * time.Minute)
 	l.idleTick(context.Background())
@@ -258,13 +258,11 @@ func TestIdleTickSkipsWhenNotDue(t *testing.T) {
 
 func TestStartDisabledSpawnsNothing(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
-	l, ext := idleTickLearner(0, 2, now)
+	l, ext := idleTickLearner(0, now)
 	l.lastRun = now.Add(-100 * 24 * time.Hour)
 	l.lastActivity = now.Add(-100 * time.Hour)
 
-	old := idlePollInterval
-	idlePollInterval = time.Millisecond
-	defer func() { idlePollInterval = old }()
+	l.idlePoll = time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -277,13 +275,11 @@ func TestStartDisabledSpawnsNothing(t *testing.T) {
 
 func TestStartFiresWhenDueThenStopsOnCancel(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
-	l, ext := idleTickLearner(7, 2, now)
+	l, ext := idleTickLearner(7, now)
 	l.lastRun = now.Add(-10 * 24 * time.Hour)
 	l.lastActivity = now.Add(-5 * time.Hour)
 
-	old := idlePollInterval
-	idlePollInterval = time.Millisecond
-	defer func() { idlePollInterval = old }()
+	l.idlePoll = time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
 	l.Start(ctx)
