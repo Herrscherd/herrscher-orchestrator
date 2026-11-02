@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 // idleLearner builds a Learner with the G5 idle trigger configured. A nil
@@ -232,6 +232,7 @@ func (c *countExt) Extract(context.Context, string, string) ([]Candidate, error)
 	c.mu.Unlock()
 	return nil, nil
 }
+
 func (c *countExt) count() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 type sweepFakeMem struct {
@@ -20,6 +20,7 @@ func newSweepFakeMem() *sweepFakeMem { return &sweepFakeMem{nodes: map[string]co
 func (f *sweepFakeMem) Recall(ctx context.Context, key string, depth int) (contracts.Subgraph, error) {
 	return contracts.Subgraph{Root: f.nodes[key]}, nil
 }
+
 func (f *sweepFakeMem) Record(ctx context.Context, n contracts.Node) error {
 	if n.Key == f.failOn {
 		return errors.New("record failed")
@@ -28,6 +29,7 @@ func (f *sweepFakeMem) Record(ctx context.Context, n contracts.Node) error {
 	f.nodes[n.Key] = n
 	return nil
 }
+
 func (f *sweepFakeMem) Search(ctx context.Context, q contracts.Query) ([]contracts.Node, error) {
 	var out []contracts.Node
 	for _, n := range f.nodes {

@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 // maxTurns bounds the rolling transcript kept on a session node so memory never

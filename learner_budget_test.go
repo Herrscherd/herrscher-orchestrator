@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 // budgetMem records nodes but refuses any body longer than `limit` runes with a
@@ -29,9 +29,11 @@ func (m *budgetMem) Record(_ context.Context, n contracts.Node) error {
 	m.nodes[n.Key] = n
 	return nil
 }
+
 func (m *budgetMem) Recall(_ context.Context, key string, _ int) (contracts.Subgraph, error) {
 	return contracts.Subgraph{Root: contracts.Node{Key: key}}, nil
 }
+
 func (m *budgetMem) Search(context.Context, contracts.Query) ([]contracts.Node, error) {
 	m.searches++
 	return nil, nil

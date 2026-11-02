@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 // promoNode builds a private node with the given state and a capturedAt/lastSeen

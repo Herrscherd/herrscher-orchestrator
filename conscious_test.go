@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 func TestContextEmitsMemoryAffordance(t *testing.T) {
@@ -108,8 +108,11 @@ func TestReactScopedRecallUsesRelevant(t *testing.T) {
 func TestReactBoundsPendingRecall(t *testing.T) {
 	mem := newFake()
 	mem.search = []contracts.Node{
-		{Key: "a", Body: "a"}, {Key: "b", Body: "b"}, {Key: "c", Body: "c"},
-		{Key: "d", Body: "d"}, {Key: "e", Body: "e"},
+		{Key: "a", Body: "a"},
+		{Key: "b", Body: "b"},
+		{Key: "c", Body: "c"},
+		{Key: "d", Body: "d"},
+		{Key: "e", Body: "e"},
 	}
 	c := New(mem, "alpha")
 	ctx := context.Background()

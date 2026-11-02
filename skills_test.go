@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 // skillMem is a hand-rolled contracts.Memory. These tests never touch a real
@@ -73,8 +73,10 @@ func skillCurator(m contracts.Memory) *Curator {
 
 // activeSkill is a fixture: an active KindSkill node at key.
 func activeSkill(key, title, body string) contracts.Node {
-	return contracts.Node{Key: key, Kind: contracts.KindSkill, Title: title, Body: body,
-		Meta: map[string]string{contracts.MetaState: contracts.StateActive}}
+	return contracts.Node{
+		Key: key, Kind: contracts.KindSkill, Title: title, Body: body,
+		Meta: map[string]string{contracts.MetaState: contracts.StateActive},
+	}
 }
 
 func TestReactWritesSkillNodePrivately(t *testing.T) {
@@ -248,26 +250,38 @@ func TestAsLearnedSkillStampsPrivateSkillCandidates(t *testing.T) {
 		private bool
 		want    contracts.NodeKind
 	}{
-		{"private under skills/ becomes a skill",
+		{
+			"private under skills/ becomes a skill",
 			Candidate{Private: true, Node: contracts.Node{Key: "skills/retry-http", Kind: contracts.KindDecision}},
-			true, contracts.KindSkill},
-		{"private but not under skills/ is left alone",
+			true, contracts.KindSkill,
+		},
+		{
+			"private but not under skills/ is left alone",
 			Candidate{Private: true, Node: contracts.Node{Key: "notes/a-preference", Kind: contracts.KindDecision}},
-			true, contracts.KindDecision},
-		{"shared under skills/ is left alone",
+			true, contracts.KindDecision,
+		},
+		{
+			"shared under skills/ is left alone",
 			Candidate{Private: false, Node: contracts.Node{Key: "skills/shared-thing", Kind: contracts.KindDecision}},
-			true, contracts.KindDecision},
-		{"a leading slash is still under skills/",
+			true, contracts.KindDecision,
+		},
+		{
+			"a leading slash is still under skills/",
 			Candidate{Private: true, Node: contracts.Node{Key: "/skills/x"}},
-			true, contracts.KindSkill},
-		{"skills as a name prefix is not skills as a segment",
+			true, contracts.KindSkill,
+		},
+		{
+			"skills as a name prefix is not skills as a segment",
 			Candidate{Private: true, Node: contracts.Node{Key: "skillsets/x", Kind: contracts.KindDecision}},
-			true, contracts.KindDecision},
+			true, contracts.KindDecision,
+		},
 		// Without an agent root the "private" candidate is filed under the project,
 		// so stamping it a skill would publish it to every agent unapproved.
-		{"no private scope leaves the candidate as it was",
+		{
+			"no private scope leaves the candidate as it was",
 			Candidate{Private: true, Node: contracts.Node{Key: "skills/retry-http", Kind: contracts.KindDecision}},
-			false, contracts.KindDecision},
+			false, contracts.KindDecision,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -357,12 +371,18 @@ func TestSkillUsedAdvancesLastSeenForBothKeyShapes(t *testing.T) {
 	m := newSkillMem()
 	const old = "2020-01-01T00:00:00Z"
 	for _, n := range []contracts.Node{
-		{Key: "agents/a/skills/private-one", Kind: contracts.KindSkill, Body: "p",
-			Meta: map[string]string{contracts.MetaLastSeen: old, "capturedAt": old}},
-		{Key: "skills/distilled-one", Kind: contracts.KindSkill, Body: "d",
-			Meta: map[string]string{contracts.MetaLastSeen: old}},
-		{Key: "projects/p/skills/shared-one", Kind: contracts.KindSkill, Body: "s",
-			Meta: map[string]string{contracts.MetaLastSeen: old}},
+		{
+			Key: "agents/a/skills/private-one", Kind: contracts.KindSkill, Body: "p",
+			Meta: map[string]string{contracts.MetaLastSeen: old, "capturedAt": old},
+		},
+		{
+			Key: "skills/distilled-one", Kind: contracts.KindSkill, Body: "d",
+			Meta: map[string]string{contracts.MetaLastSeen: old},
+		},
+		{
+			Key: "projects/p/skills/shared-one", Kind: contracts.KindSkill, Body: "s",
+			Meta: map[string]string{contracts.MetaLastSeen: old},
+		},
 	} {
 		m.nodes[n.Key] = n
 	}

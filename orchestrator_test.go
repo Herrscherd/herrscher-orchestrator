@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 // fakeMem is a minimal in-memory contracts.Memory for testing the orchestrator.
@@ -21,6 +21,7 @@ func (f *fakeMem) Record(_ context.Context, n contracts.Node) error {
 	f.nodes[n.Key] = n
 	return nil
 }
+
 func (f *fakeMem) Recall(_ context.Context, key string, depth int) (contracts.Subgraph, error) {
 	root, ok := f.nodes[key]
 	if !ok {
@@ -36,9 +37,11 @@ func (f *fakeMem) Recall(_ context.Context, key string, depth int) (contracts.Su
 	}
 	return sg, nil
 }
+
 func (f *fakeMem) Search(context.Context, contracts.Query) ([]contracts.Node, error) {
 	return f.search, nil
 }
+
 func (f *fakeMem) Links(_ context.Context, from, to, rel string) error {
 	f.links = append(f.links, [3]string{from, to, rel})
 	return nil

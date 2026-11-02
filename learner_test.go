@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 // recMem records nodes and links so we can assert what the learner persisted.
@@ -26,17 +26,21 @@ func (m *recMem) Record(_ context.Context, n contracts.Node) error {
 	m.nodes[n.Key] = n
 	return nil
 }
+
 func (m *recMem) Recall(_ context.Context, key string, _ int) (contracts.Subgraph, error) {
 	if n, ok := m.nodes[key]; ok {
 		return contracts.Subgraph{Root: n}, nil
 	}
 	return contracts.Subgraph{Root: contracts.Node{Key: key}}, nil
 }
+
 func (m *recMem) Search(context.Context, contracts.Query) ([]contracts.Node, error) { return nil, nil }
+
 func (m *recMem) Links(_ context.Context, from, to, rel string) error {
 	m.links = append(m.links, [3]string{from, to, rel})
 	return nil
 }
+
 func (m *recMem) Unlink(_ context.Context, from, to string) error {
 	kept := m.links[:0:0]
 	for _, l := range m.links {

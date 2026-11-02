@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 // Sweep re-derives every node's lifecycle state from its lastSeen timestamp and

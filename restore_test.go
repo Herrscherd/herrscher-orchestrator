@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 // restoreMem is a minimal fake Memory dedicated to Restore's tests: unlike
@@ -28,11 +28,13 @@ func (m *restoreMem) Recall(_ context.Context, key string, _ int) (contracts.Sub
 	}
 	return contracts.Subgraph{Root: n}, nil
 }
+
 func (m *restoreMem) Record(_ context.Context, n contracts.Node) error {
 	m.nodes[n.Key] = n
 	m.records = append(m.records, n)
 	return nil
 }
+
 func (m *restoreMem) Search(context.Context, contracts.Query) ([]contracts.Node, error) {
 	return nil, nil
 }

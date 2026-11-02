@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 // maxSkillNameRunes caps a skill's key segment, and with it the directory the

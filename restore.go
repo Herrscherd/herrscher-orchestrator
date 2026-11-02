@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 // ErrMergedOriginal is returned by Restore when key names a node folded into an

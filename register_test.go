@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 func TestStaleDuration(t *testing.T) {
@@ -128,19 +128,36 @@ func TestBoolSetting(t *testing.T) {
 		want bool
 	}{
 		// recognised true spellings override either default
-		{"true", false, true}, {"1", false, true}, {"on", false, true}, {"yes", false, true},
-		{"true", true, true}, {"1", true, true}, {"on", true, true}, {"yes", true, true},
+		{"true", false, true},
+		{"1", false, true},
+		{"on", false, true},
+		{"yes", false, true},
+		{"true", true, true},
+		{"1", true, true},
+		{"on", true, true},
+		{"yes", true, true},
 		// recognised false spellings override either default
-		{"false", true, false}, {"0", true, false}, {"off", true, false}, {"no", true, false},
-		{"false", false, false}, {"0", false, false}, {"off", false, false}, {"no", false, false},
+		{"false", true, false},
+		{"0", true, false},
+		{"off", true, false},
+		{"no", true, false},
+		{"false", false, false},
+		{"0", false, false},
+		{"off", false, false},
+		{"no", false, false},
 		// case and surrounding whitespace are normalised, so an operator who
 		// writes TRUE or " true " gets what they plainly meant
-		{"TRUE", false, true}, {"False", true, false},
-		{"  on  ", false, true}, {"\tOFF\n", true, false},
+		{"TRUE", false, true},
+		{"False", true, false},
+		{"  on  ", false, true},
+		{"\tOFF\n", true, false},
 		// empty / unrecognised → default, identically in both directions
-		{"", true, true}, {"", false, false},
-		{"garbage", true, true}, {"garbage", false, false},
-		{"2", true, true}, {"2", false, false},
+		{"", true, true},
+		{"", false, false},
+		{"garbage", true, true},
+		{"garbage", false, false},
+		{"2", true, true},
+		{"2", false, false},
 	}
 	for _, c := range cases {
 		if got := boolSetting(c.in, c.def); got != c.want {

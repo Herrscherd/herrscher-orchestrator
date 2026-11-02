@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 func buildOrch(t *testing.T, settings map[string]string) contracts.Orchestrator {

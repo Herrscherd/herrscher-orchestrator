@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 // A session that launched under a guessed project must be able to file the rest

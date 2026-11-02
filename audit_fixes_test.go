@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 type archiveAwareMem struct {
@@ -20,9 +20,11 @@ func (m *archiveAwareMem) Record(_ context.Context, n contracts.Node) error {
 	m.records = append(m.records, n)
 	return nil
 }
+
 func (m *archiveAwareMem) Recall(_ context.Context, key string, _ int) (contracts.Subgraph, error) {
 	return contracts.Subgraph{Root: contracts.Node{Key: key}}, nil
 }
+
 func (m *archiveAwareMem) Search(_ context.Context, q contracts.Query) ([]contracts.Node, error) {
 	out := append([]contracts.Node{}, m.live...)
 	if q.IncludeArchived {
@@ -200,11 +202,13 @@ func (m *lockedMem) Record(_ context.Context, n contracts.Node) error {
 	m.nodes[n.Key] = n
 	return nil
 }
+
 func (m *lockedMem) Recall(_ context.Context, key string, _ int) (contracts.Subgraph, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return contracts.Subgraph{Root: m.nodes[key]}, nil
 }
+
 func (m *lockedMem) Search(context.Context, contracts.Query) ([]contracts.Node, error) {
 	return nil, nil
 }

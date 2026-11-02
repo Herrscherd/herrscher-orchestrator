@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 // ReportKind is the orchestrator-local Node.Kind used for a per-pass audit

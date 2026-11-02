@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 // rawNodes returns the KindTranscript nodes recorded so far, keyed by their node

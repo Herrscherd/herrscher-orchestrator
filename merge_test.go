@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 // mergeMem is a fake Memory: Search returns a fixed node set, Record/Links
@@ -25,12 +25,15 @@ func (m *mergeMem) Record(_ context.Context, n contracts.Node) error {
 	m.records = append(m.records, n)
 	return nil
 }
+
 func (m *mergeMem) Recall(_ context.Context, key string, _ int) (contracts.Subgraph, error) {
 	return contracts.Subgraph{Root: contracts.Node{Key: key}}, nil
 }
+
 func (m *mergeMem) Search(context.Context, contracts.Query) ([]contracts.Node, error) {
 	return m.nodes, nil
 }
+
 func (m *mergeMem) Links(_ context.Context, from, to, rel string) error {
 	m.links = append(m.links, [3]string{from, to, rel})
 	return nil
@@ -49,6 +52,7 @@ type fakeMerger struct {
 func (f *fakeMerger) Extract(context.Context, string, string) ([]Candidate, error) {
 	return nil, nil
 }
+
 func (f *fakeMerger) Merge(_ context.Context, cands []contracts.Node) ([]Umbrella, error) {
 	f.calls = append(f.calls, cands)
 	return f.result, f.err

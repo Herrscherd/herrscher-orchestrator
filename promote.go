@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 // MetaPromotedTo, when set on a private node, names the Key of the shared copy
@@ -76,7 +76,7 @@ func (l *Learner) promoteEligible(n contracts.Node, now time.Time) bool {
 // is by design — peers converging on the same node dedup onto a single
 // shared copy rather than each getting their own; the last promotion to run
 // upserts and wins on Body.
-func promotedKey(project string, agentKey string) string {
+func promotedKey(project, agentKey string) string {
 	_, rest, _ := strings.Cut(agentKey, "/") // "agents/<agent>/<tail>" -> "<agent>/<tail>"
 	_, tail, _ := strings.Cut(rest, "/")     // -> "<tail>"
 	return project + "/" + tail
