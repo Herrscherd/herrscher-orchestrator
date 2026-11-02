@@ -143,7 +143,7 @@ func TestObserveStampsLastActivity(t *testing.T) {
 	}
 }
 
-func TestConcurrentObserveAndConsolidate(t *testing.T) {
+func TestConcurrentObserveAndConsolidateIsRaceFree(t *testing.T) {
 	mem := &mergeMem{}
 	l := NewLearner(mem, "s", contracts.MemoryScope{}, plainExt{}, "", 1)
 	l.SetIdle(1, 1)
