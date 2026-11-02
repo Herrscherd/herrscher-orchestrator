@@ -9,8 +9,6 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// A session that launched under a guessed project must be able to file the rest
-// of what it learns somewhere else, once the conversation says where.
 func TestSetScopeRedirectsWhatIsRemembered(t *testing.T) {
 	mem := newFake()
 	c := NewScoped(mem, "s", contracts.MemoryScope{Project: contracts.ProjectKey("herrscher")})
@@ -31,8 +29,6 @@ func TestSetScopeRedirectsWhatIsRemembered(t *testing.T) {
 	}
 }
 
-// SetScope arrives from the turn goroutine while the idle loop may be walking
-// the old roots. Run under -race: the point of the test is that it is quiet.
 func TestSetScopeIsSafeAlongsideAConsolidate(t *testing.T) {
 	l := NewLearner(newFake(), "s", contracts.MemoryScope{Project: contracts.ProjectKey("a")}, nil, "", 0)
 	var wg sync.WaitGroup

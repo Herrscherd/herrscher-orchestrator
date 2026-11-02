@@ -143,11 +143,6 @@ func TestReactSkillUpsertsInPlaceKeepingCapturedAt(t *testing.T) {
 	}
 }
 
-// The private scope is where the whole trust boundary lives: a skill is free in
-// its agent's root and needs a human to cross into the project's. A session with
-// no agent root has no free side, and contracts.RecordPrivate would file the node
-// under the project instead. Dropping it is the only answer that does not hand
-// every agent of the project an unapproved procedure.
 func TestReactSkillNeedsAPrivateScope(t *testing.T) {
 	m := newSkillMem()
 	c := NewScoped(m, "s1", contracts.MemoryScope{Project: "projects/p"})
@@ -353,10 +348,6 @@ func TestLearnedSkillsSilentWhenOff(t *testing.T) {
 	}
 }
 
-// The names the engine reports carry no key, and a key cannot be rebuilt from a
-// name: the <skill> marker writes agents/a/skills/x, while an extractor candidate
-// keeps the flat key it was distilled with and is only linked under that root.
-// Both shapes must be stamped, or a skill used every day would age out as unused.
 func TestSkillUsedAdvancesLastSeenForBothKeyShapes(t *testing.T) {
 	m := newSkillMem()
 	const old = "2020-01-01T00:00:00Z"

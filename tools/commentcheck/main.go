@@ -175,6 +175,7 @@ func strayComments(path string, file *ast.File, namedByAGenerator bool) []token.
 	}
 	allowed := allowedDocs(file)
 	if strings.HasSuffix(path, "_test.go") {
+		allowed = exampleDocs(file)
 		allowExampleOutputs(file, allowed)
 	}
 	bodies := functionBodies(file)
@@ -509,6 +510,16 @@ func isSetting(argument string) bool {
 	return hasValue && key != "" && value != "" && !strings.ContainsFunc(key, func(letter rune) bool {
 		return !unicode.IsLower(letter) && !unicode.IsDigit(letter)
 	})
+}
+
+func exampleDocs(file *ast.File) map[*ast.CommentGroup]bool {
+	allowed := make(map[*ast.CommentGroup]bool)
+	for _, declared := range file.Decls {
+		if example, isFunc := declared.(*ast.FuncDecl); isFunc && isRunnableExample(example) && example.Doc != nil {
+			allowed[example.Doc] = true
+		}
+	}
+	return allowed
 }
 
 func allowExampleOutputs(file *ast.File, allowed map[*ast.CommentGroup]bool) {

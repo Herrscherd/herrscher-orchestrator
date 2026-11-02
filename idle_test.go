@@ -143,11 +143,6 @@ func TestObserveStampsLastActivity(t *testing.T) {
 	}
 }
 
-// TestConcurrentObserveAndConsolidate exercises the interleaving of a turn-path
-// Observe (which may fire the cadence Consolidate) and a forced idle-triggered
-// Consolidate from a second goroutine. Its acceptance bar is a clean `-race`
-// run: no data race, no panic. Uses a real (empty) mergeMem so the full
-// Consolidate body (extract/sweep/merge/promote/report) executes.
 func TestConcurrentObserveAndConsolidate(t *testing.T) {
 	mem := &mergeMem{}
 	l := NewLearner(mem, "s", contracts.MemoryScope{}, plainExt{}, "", 1)
@@ -181,12 +176,6 @@ func (b blockExt) Extract(context.Context, string, string) ([]Candidate, error) 
 	return nil, nil
 }
 
-// TestObserveDoesNotBlockDuringIdleConsolidate is the invariant-2 liveness guard:
-// a turn-path Observe must never wait on a slow background Consolidate. It pins mu
-// inside a consolidation (blockExt held in Extract), then asserts Observe still
-// returns promptly. Observe stamps lastActivity under stampMu, not mu, so it does
-// not block; if the stamp ever moves back onto mu this test hangs past the
-// deadline and fails. This is a liveness property `-race` cannot catch.
 func TestObserveDoesNotBlockDuringIdleConsolidate(t *testing.T) {
 	ext := blockExt{entered: make(chan struct{}), release: make(chan struct{})}
 	l := NewLearner(&mergeMem{}, "s", contracts.MemoryScope{}, ext, "", 0)

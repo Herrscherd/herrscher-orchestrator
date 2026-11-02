@@ -151,11 +151,6 @@ func TestNilExtractorMakesConsolidateNoOp(t *testing.T) {
 	}
 }
 
-// TestConsolidateResetsTransitionsOnEarlyReturn guards the deferred reset:
-// Restore appends transitions out of band between passes, and a nil-extractor
-// Learner's Consolidate returns early (before report). Without the deferred
-// reset those transitions would accumulate unbounded across passes. The defer
-// caps them on every return path.
 func TestConsolidateResetsTransitionsOnEarlyReturn(t *testing.T) {
 	mem := newRec()
 	l := NewLearner(mem, "alpha", contracts.MemoryScope{Project: "p"}, nil, "", 0)

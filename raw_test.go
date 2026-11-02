@@ -52,11 +52,6 @@ func TestObserveRecordsRawTurnWhenEnabled(t *testing.T) {
 	}
 }
 
-// TestRawSurvivesLearnerRestart locks the G7 append-only invariant across a
-// bridge restart: the supervised bridge runs as a subprocess, so a resumed
-// session rebuilds the Learner from scratch (rawSeq resets to 1). A per-process
-// epoch prefix must keep the fresh run's turns from overwriting the earlier
-// run's raw/<tail>/1.. nodes in the shared vault.
 func TestRawSurvivesLearnerRestart(t *testing.T) {
 	mem := newRec()
 	ctx := context.Background()
@@ -86,9 +81,6 @@ func TestRawSurvivesLearnerRestart(t *testing.T) {
 	}
 }
 
-// TestRawKeyConfinesSessionTail verifies a '/' in the session id cannot make the
-// raw node escape its raw/<tail>/ segment (belt-and-suspenders; session is
-// trusted host config).
 func TestRawKeyConfinesSessionTail(t *testing.T) {
 	mem := newRec()
 	l := NewLearner(mem, "team/../evil", contracts.MemoryScope{}, nil, "", 0)

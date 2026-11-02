@@ -38,10 +38,6 @@ func (m *restoreMem) Links(context.Context, string, string, string) error { retu
 func (m *restoreMem) Unlink(context.Context, string, string) error        { return nil }
 func (m *restoreMem) Close() error                                        { return nil }
 
-// TestForceRestoreDropsMergedIntoEdge locks the G4 follow-up: force-restoring a
-// merged original must not only clear Meta[MetaMergedInto] but also drop the
-// residual merged-into edge the merge pass created (via the new Unlink port
-// verb). Uses recMem, whose Unlink actually removes from its link store.
 func TestForceRestoreDropsMergedIntoEdge(t *testing.T) {
 	ctx := context.Background()
 	mem := newRec()
@@ -157,9 +153,6 @@ func TestLearnerRestoreAppendsTransition(t *testing.T) {
 	}
 }
 
-// TestLearnerRestoreRecordsRealPriorState proves the audit From is the node's
-// observed prior state, not a hardcoded "archived": restoring a merely-stale
-// node must record From=stale.
 func TestLearnerRestoreRecordsRealPriorState(t *testing.T) {
 	m := newRestoreMem()
 	m.nodes["facts/a"] = contracts.Node{Key: "facts/a", Meta: map[string]string{
