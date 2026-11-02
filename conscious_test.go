@@ -83,7 +83,6 @@ func TestReactRecallSurfacedNextContext(t *testing.T) {
 	if !strings.Contains(got, "results of your last") || !strings.Contains(got, "42 is the answer") {
 		t.Fatalf("recall hits not surfaced in next Context: %q", got)
 	}
-	// Surfaced exactly once: a subsequent Context no longer carries them.
 	if again := c.Context(ctx); strings.Contains(again, "42 is the answer") {
 		t.Fatalf("recall hits surfaced twice: %q", again)
 	}

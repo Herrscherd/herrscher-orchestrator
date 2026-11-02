@@ -9,8 +9,6 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// mergeMem is a fake Memory: Search returns a fixed node set, Record/Links
-// capture writes. recErrOn, if set, makes Record fail for that one Key.
 type mergeMem struct {
 	nodes    []contracts.Node
 	records  []contracts.Node
@@ -20,7 +18,7 @@ type mergeMem struct {
 
 func (m *mergeMem) Record(_ context.Context, n contracts.Node) error {
 	if m.recErrOn != "" && n.Key == m.recErrOn {
-		return context.DeadlineExceeded // any non-budget error
+		return context.DeadlineExceeded
 	}
 	m.records = append(m.records, n)
 	return nil
@@ -41,8 +39,6 @@ func (m *mergeMem) Links(_ context.Context, from, to, rel string) error {
 func (m *mergeMem) Unlink(context.Context, string, string) error { return nil }
 func (m *mergeMem) Close() error                                 { return nil }
 
-// fakeMerger is an Extractor that ALSO implements Merger. It records each Merge
-// call's candidate slice and returns a fixed result.
 type fakeMerger struct {
 	calls  [][]contracts.Node
 	result []Umbrella
@@ -58,19 +54,16 @@ func (f *fakeMerger) Merge(_ context.Context, cands []contracts.Node) ([]Umbrell
 	return f.result, f.err
 }
 
-// plainExt is an Extractor that does NOT implement Merger.
 type plainExt struct{}
 
 func (plainExt) Extract(context.Context, string, string) ([]Candidate, error) { return nil, nil }
 
-// stale builds a stale node with a domain.
 func stale(key, domain string) contracts.Node {
 	return contracts.Node{Key: key, Body: key, Meta: map[string]string{
 		"domain": domain, contracts.MetaState: contracts.StateStale,
 	}}
 }
 
-// learnerWith builds a Learner over mem+ex with merge configured.
 func learnerWith(mem contracts.Memory, ex Extractor, min, max int, target string) *Learner {
 	l := NewLearner(mem, "s", contracts.MemoryScope{}, ex, "", 0)
 	l.SetMerge(min, max, target)
@@ -91,7 +84,7 @@ func TestMergeNoMergerIsNoop(t *testing.T) {
 func TestMergeDisabledWhenMinZero(t *testing.T) {
 	mem := &mergeMem{nodes: []contracts.Node{stale("a", "d"), stale("b", "d")}}
 	f := &fakeMerger{}
-	l := learnerWith(mem, f, 0, 40, "stale") // min 0 => off
+	l := learnerWith(mem, f, 0, 40, "stale")
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -101,7 +94,7 @@ func TestMergeDisabledWhenMinZero(t *testing.T) {
 }
 
 func TestMergeBelowThresholdNoCall(t *testing.T) {
-	mem := &mergeMem{nodes: []contracts.Node{stale("a", "d")}} // 1 < min 2
+	mem := &mergeMem{nodes: []contracts.Node{stale("a", "d")}}
 	f := &fakeMerger{}
 	l := learnerWith(mem, f, 2, 40, "stale")
 	if err := l.Merge(context.Background()); err != nil {
@@ -124,7 +117,6 @@ func TestMergeHappyPathWritesAndArchives(t *testing.T) {
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
-	// umbrella written
 	var sawUmbrella bool
 	for _, r := range mem.records {
 		if r.Key == "facts/umbrella" && r.Body == "fused" {
@@ -134,7 +126,6 @@ func TestMergeHappyPathWritesAndArchives(t *testing.T) {
 	if !sawUmbrella {
 		t.Fatal("umbrella node was not recorded")
 	}
-	// each original archived + labeled + lastSeen preserved
 	for _, k := range []string{"facts/a", "facts/b"} {
 		var got *contracts.Node
 		for i := range mem.records {
@@ -152,13 +143,11 @@ func TestMergeHappyPathWritesAndArchives(t *testing.T) {
 			t.Errorf("%s: state=%q, want archived", k, got.Meta[contracts.MetaState])
 		}
 	}
-	// lastSeen of facts/a preserved (not bumped)
 	for i := range mem.records {
 		if mem.records[i].Key == "facts/a" && mem.records[i].Meta[contracts.MetaLastSeen] != "2026-01-01T00:00:00Z" {
 			t.Errorf("facts/a lastSeen changed to %q", mem.records[i].Meta[contracts.MetaLastSeen])
 		}
 	}
-	// links original -> umbrella
 	want := map[string]bool{"facts/a": false, "facts/b": false}
 	for _, ln := range mem.links {
 		if ln[1] == "facts/umbrella" && ln[2] == "merged-into" {
@@ -175,11 +164,11 @@ func TestMergeHappyPathWritesAndArchives(t *testing.T) {
 func TestMergeRejectsInvalidUmbrellaKeepsValid(t *testing.T) {
 	mem := &mergeMem{nodes: []contracts.Node{stale("facts/a", "d"), stale("facts/b", "d")}}
 	f := &fakeMerger{result: []Umbrella{
-		{Node: contracts.Node{Key: "facts/bad", Body: "x"}, Merged: []string{"facts/a"}},          // <2
-		{Node: contracts.Node{Key: "", Body: "x"}, Merged: []string{"facts/a", "facts/b"}},        // empty key
-		{Node: contracts.Node{Key: "facts/e", Body: ""}, Merged: []string{"facts/a", "facts/b"}},  // empty body
-		{Node: contracts.Node{Key: "facts/a", Body: "x"}, Merged: []string{"facts/a", "facts/b"}}, // key reuses candidate
-		{Node: contracts.Node{Key: "facts/f", Body: "x"}, Merged: []string{"facts/a", "facts/z"}}, // key outside group
+		{Node: contracts.Node{Key: "facts/bad", Body: "x"}, Merged: []string{"facts/a"}},
+		{Node: contracts.Node{Key: "", Body: "x"}, Merged: []string{"facts/a", "facts/b"}},
+		{Node: contracts.Node{Key: "facts/e", Body: ""}, Merged: []string{"facts/a", "facts/b"}},
+		{Node: contracts.Node{Key: "facts/a", Body: "x"}, Merged: []string{"facts/a", "facts/b"}},
+		{Node: contracts.Node{Key: "facts/f", Body: "x"}, Merged: []string{"facts/a", "facts/z"}},
 		{Node: contracts.Node{Key: "facts/good", Body: "ok"}, Merged: []string{"facts/a", "facts/b"}},
 	}}
 	l := learnerWith(mem, f, 2, 40, "stale")
@@ -201,7 +190,6 @@ func TestMergeRejectsInvalidUmbrellaKeepsValid(t *testing.T) {
 }
 
 func TestMergeGroupsByDomainNotMixed(t *testing.T) {
-	// two domains, each below threshold (1), jointly 2 — must NOT merge together.
 	mem := &mergeMem{nodes: []contracts.Node{stale("a", "d1"), stale("b", "d2")}}
 	f := &fakeMerger{}
 	l := learnerWith(mem, f, 2, 40, "stale")
@@ -220,7 +208,7 @@ func TestMergeRespectsCap(t *testing.T) {
 	}
 	mem := &mergeMem{nodes: nodes}
 	f := &fakeMerger{}
-	l := learnerWith(mem, f, 2, 3, "stale") // cap 3
+	l := learnerWith(mem, f, 2, 3, "stale")
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -254,8 +242,6 @@ func TestMergeTargetFiltersToStale(t *testing.T) {
 }
 
 func TestSweepSkipsMergedOriginals(t *testing.T) {
-	// A merged original with a FRESH lastSeen would, without the guard, be
-	// re-derived as active and reactivated. The guard must keep it archived.
 	fresh := "2026-07-30T00:00:00Z"
 	n := contracts.Node{Key: "facts/a", Body: "x", Meta: map[string]string{
 		MetaMergedInto:         "facts/u",
@@ -278,14 +264,13 @@ func TestSweepSkipsMergedOriginals(t *testing.T) {
 func TestMergeBestEffortOnOriginalRecordError(t *testing.T) {
 	mem := &mergeMem{
 		nodes:    []contracts.Node{stale("facts/a", "d"), stale("facts/b", "d")},
-		recErrOn: "facts/a", // archiving facts/a fails
+		recErrOn: "facts/a",
 	}
 	f := &fakeMerger{result: []Umbrella{{
 		Node:   contracts.Node{Key: "facts/u", Body: "fused"},
 		Merged: []string{"facts/a", "facts/b"},
 	}}}
 	l := learnerWith(mem, f, 2, 40, "stale")
-	// error is surfaced (non-nil) but the umbrella + sibling still applied.
 	_ = l.Merge(context.Background())
 	var sawUmbrella, sawB bool
 	for _, r := range mem.records {
@@ -306,7 +291,7 @@ func TestMergeBestEffortOnOriginalRecordError(t *testing.T) {
 
 func TestSetMergeDefaults(t *testing.T) {
 	l := NewLearner(&mergeMem{}, "s", contracts.MemoryScope{}, &fakeMerger{}, "", 0)
-	l.SetMerge(3, 0, "bogus") // max<=0 -> default; bad target -> stale
+	l.SetMerge(3, 0, "bogus")
 	if l.mergeMax != defaultMergeMax {
 		t.Errorf("mergeMax=%d, want %d", l.mergeMax, defaultMergeMax)
 	}
@@ -320,8 +305,6 @@ func TestSetMergeDefaults(t *testing.T) {
 }
 
 func TestMergeRejectsUmbrellaCollidingWithExistingNode(t *testing.T) {
-	// An active node in another domain is NOT in the stale candidate group, but
-	// an umbrella keyed to it must still be rejected (would overwrite it).
 	other := stale("other", "d2")
 	other.Meta[contracts.MetaState] = contracts.StateActive
 	mem := &mergeMem{nodes: []contracts.Node{stale("facts/a", "d"), stale("facts/b", "d"), other}}
@@ -341,10 +324,6 @@ func TestMergeRejectsUmbrellaCollidingWithExistingNode(t *testing.T) {
 }
 
 func TestMergeRejectsDuplicateUmbrellaKeyInSamePass(t *testing.T) {
-	// Two umbrella proposals in one pass sharing a key: the first applies, the
-	// second must be rejected by the collision check — otherwise the second
-	// Record silently overwrites the first umbrella and both append a merge
-	// transition. The just-written key must be treated as an existing node.
 	mem := &mergeMem{nodes: []contracts.Node{
 		stale("facts/a", "d"), stale("facts/b", "d"),
 		stale("facts/c", "d"), stale("facts/d", "d"),
@@ -415,14 +394,14 @@ func TestMergePopulatesTransitions(t *testing.T) {
 func TestMergeTransitionSkippedOnOriginalRecordError(t *testing.T) {
 	mem := &mergeMem{
 		nodes:    []contracts.Node{stale("facts/a", "d"), stale("facts/b", "d")},
-		recErrOn: "facts/a", // archiving facts/a fails
+		recErrOn: "facts/a",
 	}
 	f := &fakeMerger{result: []Umbrella{{
 		Node:   contracts.Node{Key: "facts/u", Body: "fused"},
 		Merged: []string{"facts/a", "facts/b"},
 	}}}
 	l := learnerWith(mem, f, 2, 40, "stale")
-	_ = l.Merge(context.Background()) // error surfaced, but the sibling still applies
+	_ = l.Merge(context.Background())
 	for _, tr := range l.transitions {
 		if tr.Key == "facts/a" {
 			t.Fatalf("facts/a must not produce a transition: its archive Record failed")
@@ -434,7 +413,6 @@ func TestMergeTransitionSkippedOnOriginalRecordError(t *testing.T) {
 }
 
 func TestConsolidateRunsMerge(t *testing.T) {
-	// End-to-end: Consolidate must invoke the merge pass after the sweep.
 	mem := &mergeMem{nodes: []contracts.Node{stale("facts/a", "d"), stale("facts/b", "d")}}
 	f := &fakeMerger{}
 	l := learnerWith(mem, f, 2, 40, "stale")

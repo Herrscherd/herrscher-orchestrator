@@ -10,10 +10,6 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// restoreMem is a minimal fake Memory dedicated to Restore's tests: unlike
-// mergeMem/sweepFakeMem (which return a zero Node with no error on a missing
-// key), Recall here models the real contract Restore relies on — an absent
-// key is a genuine error, not a silent zero value.
 type restoreMem struct {
 	nodes   map[string]contracts.Node
 	records []contracts.Node

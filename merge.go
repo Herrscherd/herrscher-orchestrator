@@ -7,13 +7,11 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// defaultMergeMax caps the number of nodes handed to a Merger per domain group,
-// bounding the closed LLM pass's prompt size / cost when a caller passes max<=0.
 const defaultMergeMax = 40
 
 // MetaMergedInto, when set on a node, names the umbrella Key that subsumed it.
 // It is a terminal marker: the node is kept on disk (reversible) but archived
-// and excluded from recall. Orchestrator-internal — obsidian stores Meta
+// and excluded from recall. Orchestrator-internal; obsidian stores Meta
 // generically, so no contracts change is needed.
 const MetaMergedInto = "mergedInto"
 
@@ -53,9 +51,6 @@ func (l *Learner) SetMerge(minNodes, max int, target string) {
 	}
 }
 
-// merger returns the Merger the extractor also implements, if any. The closed
-// extractor typically implements Extract, Consolidate, and Merge, so the merge
-// pass needs no new constructor parameter.
 func (l *Learner) merger() (Merger, bool) {
 	m, ok := l.extract.(Merger)
 	return m, ok
@@ -73,14 +68,14 @@ func (l *Learner) Merge(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	nodes, err := l.mem.Search(ctx, contracts.Query{}) // active+stale, never archived
+	nodes, err := l.mem.Search(ctx, contracts.Query{})
 	if err != nil {
 		return err
 	}
 	groups := map[string][]contracts.Node{}
 	for _, n := range nodes {
 		if n.Meta[MetaMergedInto] != "" {
-			continue // already folded; terminal
+			continue
 		}
 		if !l.mergeEligible(n) {
 			continue
@@ -109,8 +104,8 @@ func (l *Learner) Merge(ctx context.Context) error {
 		if merr != nil {
 			slog.Warn("memory: merge group failed", "domain", domain, "size", len(group), "err", merr)
 			if firstErr == nil {
-				firstErr = merr // record and keep going: one bad group must not
-			} // abort the others
+				firstErr = merr
+			}
 			continue
 		}
 		for _, u := range umbrellas {
@@ -130,15 +125,12 @@ func mergeExcludedKind(k contracts.NodeKind) bool {
 	return false
 }
 
-// mergeEligible reports whether node n is in scope for the current merge target.
-// "all" = anything not archived; "active" = active/absent-state only; "stale"
-// (default) = stale only.
 func (l *Learner) mergeEligible(n contracts.Node) bool {
 	if mergeExcludedKind(n.Kind) {
 		return false
 	}
 	if n.Meta[MetaPromotedTo] != "" {
-		return false // a promoted original is settled: never re-fuse it with its shared copy
+		return false
 	}
 	state := n.Meta[contracts.MetaState]
 	if state == "" {
@@ -149,36 +141,23 @@ func (l *Learner) mergeEligible(n contracts.Node) bool {
 		return state != contracts.StateArchived
 	case "active":
 		return state == contracts.StateActive
-	default: // "stale"
+	default:
 		return state == contracts.StateStale
 	}
 }
 
-// applyUmbrella validates one Umbrella against the group it came from, then — if
-// valid — writes the fused node and labels/archives/links each original. A
-// malformed proposal is rejected (WARN, skipped) so it cannot corrupt the graph
-// or drop valid proposals from the same batch. Per-original write failures are
-// best-effort (record first, continue) so one bad original never strands the
-// umbrella or its siblings.
 func (l *Learner) applyUmbrella(ctx context.Context, u Umbrella, group []contracts.Node, existing map[string]bool) error {
 	byKey := make(map[string]contracts.Node, len(group))
 	for _, n := range group {
 		byKey[n.Key] = n
 	}
 	if !l.validUmbrella(u, byKey, existing) {
-		return nil // rejected (WARN already emitted)
+		return nil
 	}
 	if err := l.mem.Record(ctx, u.Node); err != nil {
 		return err
 	}
-	// Register the freshly-written umbrella as a live key so a second proposal
-	// in the same pass that reuses this key is rejected by validUmbrella's
-	// collision check — otherwise two umbrellas sharing a key would each append
-	// a merge transition and the second Record would silently overwrite the
-	// first.
 	existing[u.Node.Key] = true
-	// The umbrella is a brand-new node (validUmbrella rejects a key collision),
-	// so its prior state is unconditionally "none" -> it now exists active.
 	l.transitions = append(l.transitions, Transition{Key: u.Node.Key, From: "", To: contracts.StateActive, Kind: "merge"})
 	var firstErr error
 	applied := make(map[string]bool, len(u.Merged))
@@ -197,14 +176,11 @@ func (l *Learner) applyUmbrella(ctx context.Context, u Umbrella, group []contrac
 		}
 		orig.Meta[MetaMergedInto] = u.Node.Key
 		orig.Meta[contracts.MetaState] = contracts.StateArchived
-		// orig already carries its lastSeen from Search; re-recording with it
-		// present keeps obsidian's per-write stamp from bumping the age (same
-		// contract Sweep relies on).
 		if err := l.mem.Record(ctx, orig); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
-			continue // do not record a transition for a write that didn't land
+			continue
 		}
 		l.transitions = append(l.transitions, Transition{Key: k, From: prevState, To: contracts.StateArchived, Kind: "merge"})
 		if err := l.mem.Links(ctx, k, u.Node.Key, "merged-into"); err != nil && firstErr == nil {
@@ -214,11 +190,6 @@ func (l *Learner) applyUmbrella(ctx context.Context, u Umbrella, group []contrac
 	return firstErr
 }
 
-// validUmbrella rejects (WARN + false) an umbrella that would corrupt the graph:
-// empty Key/Body, fewer than 2 merged originals, a Key that collides with any
-// existing live node — the `existing` set, which includes the merged originals —
-// (an umbrella must be a NEW node, never overwriting one), or a merged Key
-// outside the candidate group.
 func (l *Learner) validUmbrella(u Umbrella, byKey map[string]contracts.Node, existing map[string]bool) bool {
 	reason := ""
 	switch {
@@ -229,7 +200,7 @@ func (l *Learner) validUmbrella(u Umbrella, byKey map[string]contracts.Node, exi
 	}
 	if reason == "" {
 		if existing[u.Node.Key] {
-			reason = "umbrella key collides with an existing node" // must be a NEW node
+			reason = "umbrella key collides with an existing node"
 		}
 	}
 	if reason == "" {

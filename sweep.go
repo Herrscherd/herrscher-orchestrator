@@ -29,24 +29,21 @@ func (c *Curator) Sweep(ctx context.Context) error {
 	var firstErr error
 	for _, n := range nodes {
 		if n.Meta[MetaMergedInto] != "" {
-			continue // merged originals are terminal; never reactivate a folded fragment
+			continue
 		}
 		if n.Kind == ReportKind {
-			continue // audit reports are artifacts, not lifecycle-managed memory:
-			// aging them would append a sweep transition, which report() would
-			// then write as a fresh report — a self-feeding loop that never
-			// quiesces and grows the swept set without bound.
+			continue
 		}
 		stamp := n.Meta[contracts.MetaLastSeen]
 		if stamp == "" {
 			stamp = n.Meta["capturedAt"]
 		}
 		if stamp == "" {
-			continue // no age basis
+			continue
 		}
 		lastSeen, err := time.Parse(time.RFC3339, stamp)
 		if err != nil {
-			continue // unparseable timestamp
+			continue
 		}
 		next := contracts.NextState(lastSeen, now, c.staleAfter, c.archiveAfter)
 		cur := n.Meta[contracts.MetaState]
@@ -54,25 +51,20 @@ func (c *Curator) Sweep(ctx context.Context) error {
 			cur = contracts.StateActive
 		}
 		if next == cur {
-			continue // no change: don't rewrite
+			continue
 		}
 		if n.Meta == nil {
 			n.Meta = map[string]string{}
 		}
 		n.Meta[contracts.MetaState] = next
-		// Re-supply lastSeen so the state-only write does not reset the age.
 		if n.Meta[contracts.MetaLastSeen] == "" {
 			n.Meta[contracts.MetaLastSeen] = stamp
 		}
-		// Best-effort: a per-node write failure (e.g. a node that trips the
-		// obsidian budget) must not abort the rest of the sweep, or one bad
-		// node would freeze decay for every node after it, every pass. Record
-		// the first error and keep going; Consolidate swallows the return.
 		if err := c.mem.Record(ctx, n); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
-			continue // do not record a transition for a write that didn't land
+			continue
 		}
 		c.transitions = append(c.transitions, Transition{Key: n.Key, From: cur, To: next, Kind: "sweep"})
 	}

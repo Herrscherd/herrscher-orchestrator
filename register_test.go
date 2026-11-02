@@ -119,15 +119,14 @@ func TestOrchestratorFactoryWiresStaleness(t *testing.T) {
 }
 
 // TestBoolSetting pins the single boolean parser: only the recognised
-// spellings flip the switch; every other string — empty, unset, typo,
-// garbage — falls through to the caller's explicit default.
+// spellings flip the switch; every other string (empty, unset, typo,
+// garbage) falls through to the caller's explicit default.
 func TestBoolSetting(t *testing.T) {
 	cases := []struct {
 		in   string
 		def  bool
 		want bool
 	}{
-		// recognised true spellings override either default
 		{"true", false, true},
 		{"1", false, true},
 		{"on", false, true},
@@ -136,7 +135,6 @@ func TestBoolSetting(t *testing.T) {
 		{"1", true, true},
 		{"on", true, true},
 		{"yes", true, true},
-		// recognised false spellings override either default
 		{"false", true, false},
 		{"0", true, false},
 		{"off", true, false},
@@ -145,13 +143,10 @@ func TestBoolSetting(t *testing.T) {
 		{"0", false, false},
 		{"off", false, false},
 		{"no", false, false},
-		// case and surrounding whitespace are normalised, so an operator who
-		// writes TRUE or " true " gets what they plainly meant
 		{"TRUE", false, true},
 		{"False", true, false},
 		{"  on  ", false, true},
 		{"\tOFF\n", true, false},
-		// empty / unrecognised → default, identically in both directions
 		{"", true, true},
 		{"", false, false},
 		{"garbage", true, true},
@@ -168,7 +163,7 @@ func TestBoolSetting(t *testing.T) {
 
 // TestReportEnabledAndRawArchiveDefaults pins the two settings end to end
 // through the plugin factory: their DEFAULTS differ (report on, raw off) but
-// their PARSING is identical — an unrecognised or empty value leaves each at
+// their PARSING is identical. An unrecognised or empty value leaves each at
 // its own default rather than silently flipping it.
 func TestReportEnabledAndRawArchiveDefaults(t *testing.T) {
 	RegisterExtractor("bool-ex", &fakeExtractor{})

@@ -9,9 +9,6 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// skillMem is a hand-rolled contracts.Memory. These tests never touch a real
-// vault, and a map keyed by node Key reproduces the only storage behaviour that
-// matters here: Record is an upsert.
 type skillMem struct {
 	nodes    map[string]contracts.Node
 	links    [][2]string
@@ -63,15 +60,12 @@ func (m *skillMem) keys() []string {
 	return out
 }
 
-// skillCurator builds a scoped Curator over a stub with the feature on, which is
-// what every test in this file needs.
 func skillCurator(m contracts.Memory) *Curator {
 	c := NewScoped(m, "s1", contracts.MemoryScope{Project: "projects/p", Agent: "agents/a"})
 	c.SetLearnedSkills(true)
 	return c
 }
 
-// activeSkill is a fixture: an active KindSkill node at key.
 func activeSkill(key, title, body string) contracts.Node {
 	return contracts.Node{
 		Key: key, Kind: contracts.KindSkill, Title: title, Body: body,
@@ -125,8 +119,6 @@ func TestReactSkillUpsertsInPlaceKeepingCapturedAt(t *testing.T) {
 	ctx := context.Background()
 
 	c.React(ctx, `<skill name="x">première version</skill>`)
-	// An operator approved the first version. The revision below must not inherit
-	// that decision: an approval binds to the body it was granted for.
 	approved := m.nodes["agents/a/skills/x"]
 	approved.Meta[MetaApproved] = "true"
 	m.nodes["agents/a/skills/x"] = approved
@@ -275,8 +267,6 @@ func TestAsLearnedSkillStampsPrivateSkillCandidates(t *testing.T) {
 			Candidate{Private: true, Node: contracts.Node{Key: "skillsets/x", Kind: contracts.KindDecision}},
 			true, contracts.KindDecision,
 		},
-		// Without an agent root the "private" candidate is filed under the project,
-		// so stamping it a skill would publish it to every agent unapproved.
 		{
 			"no private scope leaves the candidate as it was",
 			Candidate{Private: true, Node: contracts.Node{Key: "skills/retry-http", Kind: contracts.KindDecision}},
@@ -397,8 +387,6 @@ func TestSkillUsedAdvancesLastSeenForBothKeyShapes(t *testing.T) {
 	c := skillCurator(m)
 	c.now = func() time.Time { return time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC) }
 
-	// The projection is what put these skills on disk in the first place, so it is
-	// always the step before the engine can report one activated.
 	if _, err := c.LearnedSkills(context.Background()); err != nil {
 		t.Fatalf("LearnedSkills: %v", err)
 	}
@@ -420,8 +408,6 @@ func TestSkillUsedAdvancesLastSeenForBothKeyShapes(t *testing.T) {
 
 func TestSkillUsedIgnoresWhatItCannotStamp(t *testing.T) {
 	m := newSkillMem()
-	// Projected as a skill, but something else by the time it is stamped: the
-	// projection is a session-old answer, so the kind is re-checked at write time.
 	m.nodes["agents/a/skills/mutated"] = contracts.Node{Key: "agents/a/skills/mutated", Kind: contracts.KindDecision}
 	m.recalls["projects/p"] = contracts.Subgraph{Root: contracts.Node{Key: "projects/p"}}
 	m.recalls["agents/a"] = contracts.Subgraph{
@@ -433,8 +419,6 @@ func TestSkillUsedIgnoresWhatItCannotStamp(t *testing.T) {
 		t.Fatalf("LearnedSkills: %v", err)
 	}
 
-	// A repo or machine-wide skill the engine reports by name and no node backs
-	// must cost nothing, not a lookup per scope root.
 	c.SkillUsed(context.Background(), []string{"never-heard-of-it", "!!!", "mutated", ""})
 
 	if n := m.nodes["agents/a/skills/mutated"]; n.Meta[contracts.MetaLastSeen] != "" {

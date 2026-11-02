@@ -10,8 +10,6 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// budgetMem records nodes but refuses any body longer than `limit` runes with a
-// *contracts.BudgetError — the same contract the obsidian per-node budget uses.
 type budgetMem struct {
 	nodes    map[string]contracts.Node
 	limit    int
@@ -42,15 +40,12 @@ func (m *budgetMem) Links(context.Context, string, string, string) error { retur
 func (m *budgetMem) Unlink(context.Context, string, string) error        { return nil }
 func (m *budgetMem) Close() error                                        { return nil }
 
-// oneBig returns a single over-budget shared fact from the journal/transcript.
 type oneBig struct{ body string }
 
 func (e *oneBig) Extract(context.Context, string, string) ([]Candidate, error) {
 	return []Candidate{{Node: contracts.Node{Key: "facts/big", Body: e.body}}}, nil
 }
 
-// bigThenSmall returns an over-budget fact followed by an in-budget one, to prove
-// a refusal does not drop the sibling.
 type bigThenSmall struct{ big, small string }
 
 func (e *bigThenSmall) Extract(context.Context, string, string) ([]Candidate, error) {
@@ -60,9 +55,6 @@ func (e *bigThenSmall) Extract(context.Context, string, string) ([]Candidate, er
 	}, nil
 }
 
-// shrinkingExtractor is an Extractor that ALSO implements Consolidator: it
-// shrinks the over-budget node's body to `to`. If to == "" it returns the node
-// unchanged (simulating a consolidator that cannot shrink far enough).
 type shrinkingExtractor struct {
 	oneBig
 	to    string
@@ -72,7 +64,7 @@ type shrinkingExtractor struct {
 func (e *shrinkingExtractor) Consolidate(_ context.Context, over contracts.Node, _ int) (contracts.Node, error) {
 	e.calls++
 	if e.to == "" {
-		return over, nil // still too large
+		return over, nil
 	}
 	over.Body = e.to
 	return over, nil
@@ -83,8 +75,8 @@ func mustScope() contracts.MemoryScope {
 }
 
 func TestPersistConsolidatesOverBudgetCandidate(t *testing.T) {
-	mem := newBudgetMem(5)                                                  // 5-rune limit
-	ex := &shrinkingExtractor{oneBig: oneBig{body: "0123456789"}, to: "ok"} // 10 → "ok"
+	mem := newBudgetMem(5)
+	ex := &shrinkingExtractor{oneBig: oneBig{body: "0123456789"}, to: "ok"}
 	l := NewLearner(mem, "s", mustScope(), ex, "", 0)
 
 	if err := l.Consolidate(context.Background()); err != nil {
@@ -107,17 +99,15 @@ func TestPersistConsolidatesOverBudgetCandidate(t *testing.T) {
 
 func TestPersistEnqueuesWhenNoConsolidator(t *testing.T) {
 	mem := newBudgetMem(5)
-	ex := &bigThenSmall{big: "0123456789", small: "hi"} // plain Extractor, no Consolidate
+	ex := &bigThenSmall{big: "0123456789", small: "hi"}
 	l := NewLearner(mem, "s", mustScope(), ex, "", 0)
 
 	if err := l.Consolidate(context.Background()); err != nil {
 		t.Fatalf("Consolidate: %v", err)
 	}
-	// Sibling under budget still persists...
 	if _, ok := mem.nodes["facts/small"]; !ok {
 		t.Fatal("in-budget sibling was dropped")
 	}
-	// ...the over-budget one is queued, not persisted, not seen.
 	if _, ok := mem.nodes["facts/big"]; ok {
 		t.Fatal("over-budget candidate was persisted despite no consolidator")
 	}
@@ -131,7 +121,7 @@ func TestPersistEnqueuesWhenNoConsolidator(t *testing.T) {
 
 func TestPersistEnqueuesWhenConsolidatorStillTooLarge(t *testing.T) {
 	mem := newBudgetMem(5)
-	ex := &shrinkingExtractor{oneBig: oneBig{body: "0123456789"}, to: ""} // returns node unchanged
+	ex := &shrinkingExtractor{oneBig: oneBig{body: "0123456789"}, to: ""}
 	l := NewLearner(mem, "s", mustScope(), ex, "", 0)
 
 	if err := l.Consolidate(context.Background()); err != nil {
@@ -150,7 +140,6 @@ func TestPersistEnqueuesWhenConsolidatorStillTooLarge(t *testing.T) {
 
 func TestPendingDrainedOnLaterPass(t *testing.T) {
 	mem := newBudgetMem(5)
-	// First pass: a plain extractor with no consolidator → the big fact is queued.
 	ex1 := &oneBig{body: "0123456789"}
 	l := NewLearner(mem, "s", mustScope(), ex1, "", 0)
 	if err := l.Consolidate(context.Background()); err != nil {
@@ -159,12 +148,7 @@ func TestPendingDrainedOnLaterPass(t *testing.T) {
 	if len(l.pending) != 1 {
 		t.Fatalf("setup: expected 1 queued, got %d", len(l.pending))
 	}
-	// Swap in an extractor+consolidator and re-run: the drain resolves the queued
-	// candidate. The new extractor returns nothing new so only the drain persists.
 	l.extract = &shrinkingExtractor{oneBig: oneBig{body: "unused"}, to: "ok"}
-	// Neutralise the new extractor's own output so the test isolates the drain:
-	// oneBig.body "unused" is 6 runes (> 5) and would re-queue under key facts/big,
-	// deduping against the drained one — so assert on persistence, not queue size.
 	if err := l.Consolidate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +159,7 @@ func TestPendingDrainedOnLaterPass(t *testing.T) {
 
 func TestQueueDedupsByKey(t *testing.T) {
 	mem := newBudgetMem(5)
-	ex := &oneBig{body: "0123456789"} // same over-budget key every pass, no consolidator
+	ex := &oneBig{body: "0123456789"}
 	l := NewLearner(mem, "s", mustScope(), ex, "", 0)
 	for i := 0; i < 3; i++ {
 		if err := l.Consolidate(context.Background()); err != nil {
@@ -187,8 +171,6 @@ func TestQueueDedupsByKey(t *testing.T) {
 	}
 }
 
-// emptyingExtractor shrinks by returning a node with an empty Body — a
-// misbehaving consolidator the Learner must refuse rather than persist as junk.
 type emptyingExtractor struct{ oneBig }
 
 func (e *emptyingExtractor) Consolidate(_ context.Context, over contracts.Node, _ int) (contracts.Node, error) {
@@ -213,7 +195,7 @@ func TestPersistRejectsEmptyConsolidatorResult(t *testing.T) {
 
 func TestSweepRunsAfterEnqueue(t *testing.T) {
 	mem := newBudgetMem(5)
-	ex := &oneBig{body: "0123456789"} // over budget, no consolidator → enqueued
+	ex := &oneBig{body: "0123456789"}
 	l := NewLearner(mem, "s", mustScope(), ex, "", 0)
 	if err := l.Consolidate(context.Background()); err != nil {
 		t.Fatalf("Consolidate: %v", err)

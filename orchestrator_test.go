@@ -8,11 +8,10 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// fakeMem is a minimal in-memory contracts.Memory for testing the orchestrator.
 type fakeMem struct {
 	nodes  map[string]contracts.Node
-	search []contracts.Node // returned verbatim by Search
-	links  [][3]string      // recorded (from, to, rel) triples
+	search []contracts.Node
+	links  [][3]string
 }
 
 func newFake() *fakeMem { return &fakeMem{nodes: map[string]contracts.Node{}} }
@@ -112,13 +111,11 @@ func TestContextIncludesLinkedNeighbours(t *testing.T) {
 
 func TestScopedContextSurfacesProjectAndAgentMemory(t *testing.T) {
 	mem := newFake()
-	// shared project memory (visible to all agents of the game)
 	mem.nodes["projects/game"] = contracts.Node{
 		Key: "projects/game", Kind: contracts.KindProject, Title: "game",
 		Links: []contracts.Link{{To: "facts/eco"}},
 	}
 	mem.nodes["facts/eco"] = contracts.Node{Key: "facts/eco", Title: "economy", Body: "DataStore Purchases"}
-	// private agent skill (only this agent)
 	mem.nodes["agents/scripter"] = contracts.Node{
 		Key: "agents/scripter", Kind: contracts.KindAgent, Title: "scripter",
 		Links: []contracts.Link{{To: "skills/ds"}},

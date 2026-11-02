@@ -31,9 +31,6 @@ func init() {
 			},
 		},
 		Orchestrator: func(ctx context.Context, cfg contracts.PluginConfig, mem contracts.Memory) (contracts.Orchestrator, error) {
-			// The host passes the raw project/agent names (runtime state); we key
-			// them onto the shared spine via contracts.ProjectKey/AgentKey
-			// (single source of truth).
 			var scope contracts.MemoryScope
 			if p := cfg.Get("memory.project"); p != "" {
 				scope.Project = contracts.ProjectKey(p)
@@ -43,14 +40,7 @@ func init() {
 			}
 			stale := staleDuration(cfg.Get("stale-days"), 30)
 			archive := staleDuration(cfg.Get("archive-days"), 90)
-			// Wired into both branches below: the <skill> marker is a Curator
-			// capability, so it has to work on a host that plugged in no extractor.
 			learnedSkills := boolSetting(cfg.Get("learned-skills"), false)
-			// Opt into the learning loop when the host names a registered
-			// extractor (the closed curation heuristics, plugged in by blank
-			// import). Without one we keep the plain Curator, so an unconfigured
-			// host is unaffected. memory.journal points at the call journal;
-			// memory.consolidate-every runs Consolidate every N turns (0 = manual).
 			if ex := lookupExtractor(cfg.Get("memory.extractor")); ex != nil {
 				every, _ := strconv.Atoi(cfg.Get("memory.consolidate-every"))
 				l := NewLearner(mem, cfg.Get("session"), scope, ex, cfg.Get("memory.journal"), every)
@@ -81,9 +71,6 @@ func init() {
 	})
 }
 
-// staleDuration parses an integer-days config value into a Duration. Empty or
-// unparseable → the default days. A value <= 0 is preserved (NextState treats
-// it as "disable this transition").
 func staleDuration(v string, defaultDays int) time.Duration {
 	days := defaultDays
 	if v != "" {
@@ -94,15 +81,6 @@ func staleDuration(v string, defaultDays int) time.Duration {
 	return time.Duration(days) * 24 * time.Hour
 }
 
-// boolSetting parses a boolean config value with an explicit default. This is
-// the single parser for every on/off setting in the manifest: only the
-// recognised spellings flip the switch, and anything else — empty/unset,
-// typos, "garbage" — falls back to def. The default is what differs between
-// settings (report-enabled is on, raw-archive is off), never the parsing.
-//
-// Case and surrounding whitespace are normalised first: an operator who writes
-// MEMORY_RAW_ARCHIVE=TRUE means true, and silently handing them the default
-// would be the same silent-typo failure this helper exists to remove.
 func boolSetting(v string, def bool) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "true", "1", "on", "yes":

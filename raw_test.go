@@ -9,9 +9,6 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// rawNodes returns the KindTranscript nodes recorded so far, keyed by their node
-// key, so tests can assert on the raw archival tier without hardcoding the
-// wall-clock epoch embedded in each key.
 func rawNodes(mem *recMem) map[string]contracts.Node {
 	out := map[string]contracts.Node{}
 	for k, n := range mem.nodes {
@@ -61,7 +58,7 @@ func TestObserveRecordsRawTurnWhenEnabled(t *testing.T) {
 // epoch prefix must keep the fresh run's turns from overwriting the earlier
 // run's raw/<tail>/1.. nodes in the shared vault.
 func TestRawSurvivesLearnerRestart(t *testing.T) {
-	mem := newRec() // the durable vault, shared across both runs of the session
+	mem := newRec()
 	ctx := context.Background()
 
 	run := func(at time.Time, content, reply string) {
@@ -74,7 +71,6 @@ func TestRawSurvivesLearnerRestart(t *testing.T) {
 	}
 
 	run(time.Date(2026, 1, 21, 9, 0, 0, 0, time.UTC), "first-run turn", "first-run reply")
-	// "restart": a brand-new Learner for the same session, seq counter back at 1.
 	run(time.Date(2026, 1, 21, 9, 5, 0, 0, time.UTC), "second-run turn", "second-run reply")
 
 	raw := rawNodes(mem)
@@ -111,7 +107,6 @@ func TestRawKeyConfinesSessionTail(t *testing.T) {
 func TestObserveSkipsRawWhenDisabled(t *testing.T) {
 	mem := newRec()
 	l := NewLearner(mem, "sess-1", contracts.MemoryScope{}, nil, "", 0)
-	// SetRawArchive not called → default off.
 	ctx := context.Background()
 	if err := l.Observe(ctx, contracts.Prompt{Author: "a", Content: "x"}, "y"); err != nil {
 		t.Fatal(err)

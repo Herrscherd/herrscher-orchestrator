@@ -10,11 +10,10 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// recMem records nodes and links so we can assert what the learner persisted.
 type recMem struct {
 	nodes  map[string]contracts.Node
-	links  [][3]string // {from, to, rel}
-	failOn string      // key whose Record returns an error (node not stored)
+	links  [][3]string
+	failOn string
 }
 
 func newRec() *recMem { return &recMem{nodes: map[string]contracts.Node{}} }
@@ -63,8 +62,6 @@ func (m *recMem) hasLink(from, to string) bool {
 	return false
 }
 
-// fakeExtractor returns one shared fact and one private skill, and records what
-// journal/transcript it was handed.
 type fakeExtractor struct {
 	gotJournal    string
 	gotTranscript string
@@ -120,8 +117,6 @@ func TestConsolidateIsIdempotent(t *testing.T) {
 	if links == 0 {
 		t.Fatal("first Consolidate recorded no links")
 	}
-	// The extractor re-returns the same candidates; a second run over the same
-	// journal must not re-link facts/skills already persisted this session.
 	if err := l.Consolidate(ctx); err != nil {
 		t.Fatalf("second Consolidate: %v", err)
 	}
@@ -175,7 +170,7 @@ func TestConsolidateResetsTransitionsOnEarlyReturn(t *testing.T) {
 
 func TestConsolidateContinuesPastRecordError(t *testing.T) {
 	mem := newRec()
-	mem.failOn = "facts/eco" // the shared fact fails; the private skill must still persist
+	mem.failOn = "facts/eco"
 	ex := &fakeExtractor{}
 	l := NewLearner(mem, "alpha", contracts.MemoryScope{Project: "projects/g", Agent: "agents/s"}, ex, "", 0)
 
@@ -183,7 +178,6 @@ func TestConsolidateContinuesPastRecordError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the failing candidate's error to be returned")
 	}
-	// A per-candidate failure must not abort the batch: the sibling still persists.
 	if _, ok := mem.nodes["skills/ds"]; !ok {
 		t.Fatal("candidate after the failing one was skipped")
 	}

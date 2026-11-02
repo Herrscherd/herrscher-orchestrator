@@ -15,7 +15,6 @@ import (
 // immediately re-skip it and a later Merge pass could re-fold it right back.
 var ErrMergedOriginal = errors.New("orchestrator: node is folded into an umbrella; restore with Force to detach it")
 
-// restoreConfig holds the options one Restore call was given.
 type restoreConfig struct {
 	force bool
 	clock func() time.Time
@@ -26,15 +25,12 @@ type RestoreOption func(*restoreConfig)
 
 // Force, when true, allows restoring a merged-into original by also clearing
 // Meta[MetaMergedInto] so the node becomes independent again. The umbrella
-// node itself is untouched — it may now have one fewer live member, which is
+// node itself is untouched. It may now have one fewer live member, which is
 // fine; umbrellas are additive, not authoritative.
 func Force(force bool) RestoreOption {
 	return func(c *restoreConfig) { c.force = force }
 }
 
-// withClock overrides Restore's injected clock. Unexported: it exists only so
-// this package's own tests can assert on a deterministic Meta[MetaLastSeen]
-// stamp; every real caller gets time.Now.
 func withClock(clock func() time.Time) RestoreOption {
 	return func(c *restoreConfig) { c.clock = clock }
 }
@@ -46,7 +42,7 @@ func withClock(clock func() time.Time) RestoreOption {
 // no-op write that still refreshes lastSeen.
 //
 // A node still carrying Meta[MetaMergedInto] is a folded fragment, not an
-// independent archived node — restoring it without also detaching it from its
+// independent archived node. Restoring it without also detaching it from its
 // umbrella would resurrect a fragment the merge pass deliberately subsumed.
 // Restore therefore REFUSES a merged original by default: it returns
 // ErrMergedOriginal unless the caller passes Force(true), in which case it
@@ -57,7 +53,7 @@ func withClock(clock func() time.Time) RestoreOption {
 // host's `memory restore` CLI verb builds a bare contracts.Memory with no
 // session/scope, the same shape as the existing memory forget/record verbs.
 //
-// An error from Recall, including "not found", surfaces unchanged — restoring
+// An error from Recall, including "not found", surfaces unchanged; restoring
 // an absent key is a real error (nothing to reactivate), unlike Deleter.Delete's
 // intentional idempotent-on-absent contract.
 //
@@ -95,16 +91,13 @@ func Restore(ctx context.Context, mem contracts.Memory, key string, opts ...Rest
 		return "", err
 	}
 	if umbrella != "" {
-		// Best-effort: the reactivation already succeeded; a failure to drop the
-		// residual merged-into edge must not fail the restore (learning never
-		// breaks the turn). The umbrella is additive, so a stale edge is cosmetic.
 		_ = mem.Unlink(ctx, key, umbrella)
 	}
 	return prior, nil
 }
 
 // Restore reactivates key over l's Memory and, on success, appends a
-// Transition{Kind:"restore"} to the pass's audit trail — surfaced in the next
+// Transition{Kind:"restore"} to the pass's audit trail, surfaced in the next
 // report if Consolidate runs before the field resets, or inspectable directly
 // via l.transitions since Restore is typically called out of band between
 // passes. The transition's From is the node's real prior state, not an

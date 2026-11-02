@@ -44,8 +44,6 @@ func TestReportWrittenWithRightShape(t *testing.T) {
 	if !strings.HasPrefix(r.Key, "reports/") {
 		t.Errorf("key %q does not start with the configured prefix", r.Key)
 	}
-	// The key becomes an on-disk vault path; ':' is illegal in filenames on
-	// some hosts, so the timestamp segment must be colon-free.
 	if strings.ContainsRune(strings.TrimPrefix(r.Key, "reports/"), ':') {
 		t.Errorf("key %q contains a colon; not filesystem-safe", r.Key)
 	}
@@ -57,9 +55,6 @@ func TestReportWrittenWithRightShape(t *testing.T) {
 }
 
 func TestReportKeysDistinctWithinSameSecond(t *testing.T) {
-	// Two passes whose clock lands in the same wall-clock second must still
-	// produce distinct report keys — otherwise Record upserts by key and the
-	// second report silently overwrites the first, breaking append-only.
 	mem := &mergeMem{}
 	l := NewLearner(mem, "s", contracts.MemoryScope{}, plainExt{}, "", 0)
 	l.SetReport(true, "reports/")
