@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
@@ -29,28 +30,66 @@ func TestSetScopeRedirectsWhatIsRemembered(t *testing.T) {
 	}
 }
 
+type gatedRecordMem struct {
+	*fakeMem
+
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (m *gatedRecordMem) Record(ctx context.Context, n contracts.Node) error {
+	m.once.Do(func() {
+		close(m.entered)
+		<-m.release
+	})
+	return m.fakeMem.Record(ctx, n)
+}
+
+type fixedExtractor struct {
+	candidates []Candidate
+}
+
+func (e fixedExtractor) Extract(context.Context, string, string) ([]Candidate, error) {
+	return e.candidates, nil
+}
+
 func TestSetScopeIsSafeAlongsideAConsolidate(t *testing.T) {
-	l := NewLearner(newFake(), "s", contracts.MemoryScope{Project: contracts.ProjectKey("a")}, nil, "", 0)
-	var wg sync.WaitGroup
-	wg.Add(2)
-	errs := make(chan error, 50)
+	mem := &gatedRecordMem{fakeMem: newFake(), entered: make(chan struct{}), release: make(chan struct{})}
+	ex := fixedExtractor{candidates: []Candidate{
+		{Node: contracts.Node{Key: "fact/one", Title: "one", Body: "first"}},
+		{Node: contracts.Node{Key: "fact/two", Title: "two", Body: "second"}},
+	}}
+	l := NewLearner(mem, "s", contracts.MemoryScope{Project: contracts.ProjectKey("a")}, ex, "", 0)
+
+	consolidated := make(chan error, 1)
+	go func() { consolidated <- l.Consolidate(context.Background()) }()
+	<-mem.entered
+
+	scoped := make(chan struct{})
 	go func() {
-		defer wg.Done()
-		for range 50 {
-			if err := l.Consolidate(context.Background()); err != nil {
-				errs <- err
-			}
-		}
+		l.SetScope(contracts.MemoryScope{Project: contracts.ProjectKey("b")})
+		close(scoped)
 	}()
-	go func() {
-		defer wg.Done()
-		for range 50 {
-			l.SetScope(contracts.MemoryScope{Project: contracts.ProjectKey("b")})
+	select {
+	case <-scoped:
+	case <-time.After(500 * time.Millisecond):
+	}
+	close(mem.release)
+
+	if err := <-consolidated; err != nil {
+		t.Fatal(err)
+	}
+	<-scoped
+
+	filedUnder := make(map[string]string)
+	for _, link := range mem.links {
+		filedUnder[link[1]] = link[0]
+	}
+	before := contracts.ProjectKey("a")
+	for _, key := range []string{"fact/one", "fact/two"} {
+		if got := filedUnder[key]; got != before {
+			t.Fatalf("%s filed under %q, want %q: one pass must not straddle a re-scope", key, got, before)
 		}
-	}()
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		t.Error(err)
 	}
 }

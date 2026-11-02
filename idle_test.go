@@ -268,7 +268,6 @@ func TestStartDisabledSpawnsNothing(t *testing.T) {
 		l, ext := idleTickLearner(0, now)
 		l.lastRun = now.Add(-100 * 24 * time.Hour)
 		l.lastActivity = now.Add(-100 * time.Hour)
-		l.idlePoll = time.Millisecond
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -286,12 +285,11 @@ func TestStartFiresWhenDueThenStopsOnCancel(t *testing.T) {
 		l, ext := idleTickLearner(7, now)
 		l.lastRun = now.Add(-10 * 24 * time.Hour)
 		l.lastActivity = now.Add(-5 * time.Hour)
-		l.idlePoll = time.Millisecond
 
 		ctx, cancel := context.WithCancel(context.Background())
 		l.Start(ctx)
 
-		synctest.Sleep(2 * time.Millisecond)
+		synctest.Sleep(defaultIdlePoll + time.Second)
 		if ext.count() == 0 {
 			t.Fatal("Start never fired an idle Consolidate when due")
 		}

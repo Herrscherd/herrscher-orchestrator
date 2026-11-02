@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
@@ -135,9 +136,9 @@ func TestConsolidateReadsJournalFile(t *testing.T) {
 	ex := &fakeExtractor{}
 	l := NewLearner(mem, "alpha", contracts.MemoryScope{Project: "projects/g"}, ex, journal, 0)
 	if err := l.Consolidate(context.Background()); err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
-	if ex.gotJournal == "" || ex.gotJournal[:3] != "123" {
+	if !strings.HasPrefix(ex.gotJournal, "123") {
 		t.Fatalf("extractor did not receive journal content: %q", ex.gotJournal)
 	}
 }

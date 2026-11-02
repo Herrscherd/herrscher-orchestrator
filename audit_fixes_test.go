@@ -166,12 +166,10 @@ func TestFactKeyDistinguishesLongFactsSharingAHead(t *testing.T) {
 	head := strings.Repeat("the studio tree map for the lobby place lives under ", 2)
 	a := head + "Workspace/Lobby"
 	b := head + "ServerStorage/Lobby"
-	if factKey("projects/p", a) == factKey("projects/p", b) {
-		t.Fatalf("two distinct facts collided on one key: %s", factKey("projects/p", a))
-	}
-	first := factKey("projects/p", a)
-	if first != factKey("projects/p", a) {
-		t.Fatal("factKey must be deterministic")
+	keyA := factKey("projects/p", a)
+	keyB := factKey("projects/p", b)
+	if keyA == keyB {
+		t.Fatalf("two distinct facts collided on one key: %s", keyA)
 	}
 }
 

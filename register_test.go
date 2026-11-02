@@ -1,8 +1,11 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -203,5 +206,51 @@ func TestReportAndRawArchiveSettingsKeepTheirOwnDefaultWhenUnusable(t *testing.T
 				t.Errorf("raw-archive=%q → rawArchive=%v, want %v", c.raw, l.rawArchive, c.wantRawArchiv)
 			}
 		})
+	}
+}
+
+type rawRecordFailMem struct {
+	*fakeMem
+}
+
+func (m rawRecordFailMem) Record(ctx context.Context, n contracts.Node) error {
+	if strings.HasPrefix(n.Key, "raw/") {
+		return errBoom
+	}
+	return m.fakeMem.Record(ctx, n)
+}
+
+func TestRegisterWiresTheProcessLoggerIntoEachOrchestrator(t *testing.T) {
+	RegisterExtractor("wiring-ex", plainExt{})
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	ctx := context.Background()
+
+	learnerCfg := contracts.PluginConfig{Settings: map[string]string{"session": "alpha", "memory.extractor": "wiring-ex", "raw-archive": "true"}}
+	learnerOrch, err := newOrchestrator(ctx, learnerCfg, rawRecordFailMem{newFake()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observeErr := learnerOrch.Observe(ctx, contracts.Prompt{Author: "a", Content: "hi"}, "yo"); observeErr != nil {
+		t.Fatal(observeErr)
+	}
+	if !strings.Contains(logs.String(), "memory: raw archive failed") {
+		t.Fatalf("the learner did not log through the process logger: %q", logs.String())
+	}
+
+	logs.Reset()
+	curatorOrch, err := newOrchestrator(ctx, contracts.PluginConfig{Settings: map[string]string{"session": "alpha"}}, recordFailMem{newFake()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	curator, ok := curatorOrch.(*Curator)
+	if !ok {
+		t.Fatalf("expected *Curator without an extractor, got %T", curatorOrch)
+	}
+	curator.remember(ctx, "use gofmt")
+	if !strings.Contains(logs.String(), "memory: remember failed") {
+		t.Fatalf("the curator did not log through the process logger: %q", logs.String())
 	}
 }

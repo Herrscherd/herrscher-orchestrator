@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -89,6 +90,8 @@ type Learner struct {
 	stopIdle context.CancelFunc
 	idleDone chan struct{}
 	idlePoll time.Duration
+
+	openJournal func(string) (journalSource, error)
 }
 
 var _ contracts.Orchestrator = (*Learner)(nil)
@@ -98,7 +101,7 @@ const defaultIdlePoll = 10 * time.Minute
 // NewLearner builds a learning orchestrator. With a nil extractor it behaves
 // exactly like the default Curator (Consolidate is a no-op).
 func NewLearner(mem contracts.Memory, session string, scope contracts.MemoryScope, ex Extractor, journal string, every int) *Learner {
-	return &Learner{Curator: NewScoped(mem, session, scope), extract: ex, journal: journal, every: every, seen: make(map[string]bool), idlePoll: defaultIdlePoll, mergeTarget: mergeTargetStale}
+	return &Learner{Curator: NewScoped(mem, session, scope), extract: ex, journal: journal, every: every, seen: make(map[string]bool), idlePoll: defaultIdlePoll, mergeTarget: mergeTargetStale, openJournal: openJournalFile}
 }
 
 // SetIdle configures the G5 inactivity trigger. sinceLastRunDays <= 0 disables
@@ -387,11 +390,24 @@ func (l *Learner) drain(ctx context.Context) error {
 	return firstErr
 }
 
+type journalSource interface {
+	io.ReadSeekCloser
+	Stat() (fs.FileInfo, error)
+}
+
+func openJournalFile(name string) (journalSource, error) {
+	file, err := os.Open(filepath.Clean(name))
+	if err != nil {
+		return nil, err
+	}
+	return file, nil
+}
+
 func (l *Learner) readJournalTail() string {
 	if l.journal == "" {
 		return ""
 	}
-	journalFile, err := os.Open(l.journal)
+	journalFile, err := l.openJournal(l.journal)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
 			l.logFailure("memory: open journal failed", err)
