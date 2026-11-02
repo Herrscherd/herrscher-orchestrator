@@ -41,8 +41,8 @@ func (f *sweepFakeMem) Search(_ context.Context, q contracts.Query) ([]contracts
 	return out, nil
 }
 func (f *sweepFakeMem) Links(_ context.Context, _, _, _ string) error { return nil }
-func (f *sweepFakeMem) Unlink(context.Context, string, string) error          { return nil }
-func (f *sweepFakeMem) Close() error                                          { return nil }
+func (f *sweepFakeMem) Unlink(context.Context, string, string) error  { return nil }
+func (f *sweepFakeMem) Close() error                                  { return nil }
 
 func seed(f *sweepFakeMem, key string, ageDays int, now time.Time) {
 	f.nodes[key] = contracts.Node{Key: key, Meta: map[string]string{
