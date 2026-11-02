@@ -262,8 +262,7 @@ func (l *Learner) consolidateLocked(ctx context.Context) error {
 	if l.extract == nil || l.mem == nil {
 		return nil
 	}
-	var firstErr error
-	l.drain(ctx, &firstErr)
+	firstErr := l.drain(ctx)
 
 	journal := l.readJournalTail()
 	var transcript string
@@ -365,7 +364,8 @@ func (l *Learner) enqueue(c Candidate) {
 	l.pending = append(l.pending, c)
 }
 
-func (l *Learner) drain(ctx context.Context, firstErr *error) {
+func (l *Learner) drain(ctx context.Context) error {
+	var firstErr error
 	var still []Candidate
 	for _, c := range l.pending {
 		switch perr := l.persist(ctx, c); {
@@ -374,13 +374,14 @@ func (l *Learner) drain(ctx context.Context, firstErr *error) {
 		case errors.Is(perr, errEnqueue):
 			still = append(still, c)
 		default:
-			if *firstErr == nil {
-				*firstErr = perr
+			if firstErr == nil {
+				firstErr = perr
 			}
 			still = append(still, c)
 		}
 	}
 	l.pending = still
+	return firstErr
 }
 
 func (l *Learner) readJournalTail() string {

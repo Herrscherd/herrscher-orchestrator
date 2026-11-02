@@ -206,7 +206,8 @@ func capLines(s string, n int) string {
 	count := 0
 	for i := range len(s) {
 		if s[i] == '\n' {
-			if count++; count == n {
+			count++
+			if count == n {
 				return s[:i]
 			}
 		}

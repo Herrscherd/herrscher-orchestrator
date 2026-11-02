@@ -35,14 +35,14 @@ type Merger interface {
 }
 
 // SetMerge configures the G2 semantic-merge pass. minNodes <= 0 disables it;
-// max <= 0 falls back to defaultMergeMax; an unrecognised target falls back to
-// "stale".
-func (l *Learner) SetMerge(minNodes, max int, target string) {
+// maxNodes <= 0 falls back to defaultMergeMax; an unrecognised target falls back
+// to "stale".
+func (l *Learner) SetMerge(minNodes, maxNodes int, target string) {
 	l.mergeMin = minNodes
-	if max <= 0 {
-		max = defaultMergeMax
+	if maxNodes <= 0 {
+		maxNodes = defaultMergeMax
 	}
-	l.mergeMax = max
+	l.mergeMax = maxNodes
 	switch target {
 	case "all", "active", "stale":
 		l.mergeTarget = target

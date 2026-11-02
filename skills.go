@@ -159,11 +159,11 @@ func isActiveSkill(n contracts.Node) bool {
 	return state == "" || state == contracts.StateActive
 }
 
-func dedupeSkills(private, shared []contracts.Node) ([]contracts.Node, map[string]string) {
+func dedupeSkills(private, shared []contracts.Node) (out []contracts.Node, seen map[string]string) {
 	sort.Slice(private, func(i, j int) bool { return private[i].Key < private[j].Key })
 	sort.Slice(shared, func(i, j int) bool { return shared[i].Key < shared[j].Key })
-	seen := make(map[string]string, len(private)+len(shared))
-	out := make([]contracts.Node, 0, len(private)+len(shared))
+	seen = make(map[string]string, len(private)+len(shared))
+	out = make([]contracts.Node, 0, len(private)+len(shared))
 	for _, n := range append(private, shared...) {
 		name := skillTail(n.Key)
 		if name == "" || seen[name] != "" {

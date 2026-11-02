@@ -10,9 +10,10 @@ import (
 func buildOrch(t *testing.T, settings map[string]string) contracts.Orchestrator {
 	t.Helper()
 	var build func(context.Context, contracts.PluginConfig, contracts.Memory) (contracts.Orchestrator, error)
-	for _, p := range contracts.Default.Orchestrators() {
-		if p.Manifest.Kind == "basic" {
-			build = p.Orchestrator
+	plugins := contracts.Default.Orchestrators()
+	for i := range plugins {
+		if plugins[i].Manifest.Kind == "basic" {
+			build = plugins[i].Orchestrator
 			break
 		}
 	}

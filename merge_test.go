@@ -64,9 +64,9 @@ func stale(key, domain string) contracts.Node {
 	}}
 }
 
-func learnerWith(mem contracts.Memory, ex Extractor, min, max int, target string) *Learner {
+func learnerWith(mem contracts.Memory, ex Extractor, minNodes, maxNodes int, target string) *Learner {
 	l := NewLearner(mem, "s", contracts.MemoryScope{}, ex, "", 0)
-	l.SetMerge(min, max, target)
+	l.SetMerge(minNodes, maxNodes, target)
 	return l
 }
 
