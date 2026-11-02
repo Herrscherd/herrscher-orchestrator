@@ -6,14 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// rawNodes returns the KindTranscript nodes recorded so far, keyed by their node
-// key, so tests can assert on the raw archival tier without hardcoding the
-// wall-clock epoch embedded in each key.
 func rawNodes(mem *recMem) map[string]contracts.Node {
-	out := map[string]contracts.Node{}
+	out := make(map[string]contracts.Node)
 	for k, n := range mem.nodes {
 		if n.Kind == contracts.KindTranscript {
 			out[k] = n
@@ -55,13 +52,8 @@ func TestObserveRecordsRawTurnWhenEnabled(t *testing.T) {
 	}
 }
 
-// TestRawSurvivesLearnerRestart locks the G7 append-only invariant across a
-// bridge restart: the supervised bridge runs as a subprocess, so a resumed
-// session rebuilds the Learner from scratch (rawSeq resets to 1). A per-process
-// epoch prefix must keep the fresh run's turns from overwriting the earlier
-// run's raw/<tail>/1.. nodes in the shared vault.
 func TestRawSurvivesLearnerRestart(t *testing.T) {
-	mem := newRec() // the durable vault, shared across both runs of the session
+	mem := newRec()
 	ctx := context.Background()
 
 	run := func(at time.Time, content, reply string) {
@@ -74,25 +66,22 @@ func TestRawSurvivesLearnerRestart(t *testing.T) {
 	}
 
 	run(time.Date(2026, 1, 21, 9, 0, 0, 0, time.UTC), "first-run turn", "first-run reply")
-	// "restart": a brand-new Learner for the same session, seq counter back at 1.
 	run(time.Date(2026, 1, 21, 9, 5, 0, 0, time.UTC), "second-run turn", "second-run reply")
 
 	raw := rawNodes(mem)
 	if len(raw) != 2 {
 		t.Fatalf("restart overwrote an earlier raw turn: want 2 nodes, got %d: %v", len(raw), raw)
 	}
-	joined := ""
+	var joinedBody strings.Builder
 	for _, n := range raw {
-		joined += n.Body + "\n"
+		joinedBody.WriteString(n.Body + "\n")
 	}
+	joined := joinedBody.String()
 	if !strings.Contains(joined, "first-run turn") || !strings.Contains(joined, "second-run turn") {
 		t.Fatalf("both runs' turns must survive, got %q", joined)
 	}
 }
 
-// TestRawKeyConfinesSessionTail verifies a '/' in the session id cannot make the
-// raw node escape its raw/<tail>/ segment (belt-and-suspenders; session is
-// trusted host config).
 func TestRawKeyConfinesSessionTail(t *testing.T) {
 	mem := newRec()
 	l := NewLearner(mem, "team/../evil", contracts.MemoryScope{}, nil, "", 0)
@@ -111,7 +100,6 @@ func TestRawKeyConfinesSessionTail(t *testing.T) {
 func TestObserveSkipsRawWhenDisabled(t *testing.T) {
 	mem := newRec()
 	l := NewLearner(mem, "sess-1", contracts.MemoryScope{}, nil, "", 0)
-	// SetRawArchive not called → default off.
 	ctx := context.Background()
 	if err := l.Observe(ctx, contracts.Prompt{Author: "a", Content: "x"}, "y"); err != nil {
 		t.Fatal(err)

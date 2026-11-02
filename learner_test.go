@@ -5,19 +5,19 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// recMem records nodes and links so we can assert what the learner persisted.
 type recMem struct {
 	nodes  map[string]contracts.Node
-	links  [][3]string // {from, to, rel}
-	failOn string      // key whose Record returns an error (node not stored)
+	links  [][3]string
+	failOn string
 }
 
-func newRec() *recMem { return &recMem{nodes: map[string]contracts.Node{}} }
+func newRec() *recMem { return &recMem{nodes: make(map[string]contracts.Node)} }
 
 func (m *recMem) Record(_ context.Context, n contracts.Node) error {
 	if n.Key == m.failOn {
@@ -26,17 +26,21 @@ func (m *recMem) Record(_ context.Context, n contracts.Node) error {
 	m.nodes[n.Key] = n
 	return nil
 }
+
 func (m *recMem) Recall(_ context.Context, key string, _ int) (contracts.Subgraph, error) {
 	if n, ok := m.nodes[key]; ok {
 		return contracts.Subgraph{Root: n}, nil
 	}
 	return contracts.Subgraph{Root: contracts.Node{Key: key}}, nil
 }
+
 func (m *recMem) Search(context.Context, contracts.Query) ([]contracts.Node, error) { return nil, nil }
+
 func (m *recMem) Links(_ context.Context, from, to, rel string) error {
 	m.links = append(m.links, [3]string{from, to, rel})
 	return nil
 }
+
 func (m *recMem) Unlink(_ context.Context, from, to string) error {
 	kept := m.links[:0:0]
 	for _, l := range m.links {
@@ -59,8 +63,6 @@ func (m *recMem) hasLink(from, to string) bool {
 	return false
 }
 
-// fakeExtractor returns one shared fact and one private skill, and records what
-// journal/transcript it was handed.
 type fakeExtractor struct {
 	gotJournal    string
 	gotTranscript string
@@ -116,8 +118,6 @@ func TestConsolidateIsIdempotent(t *testing.T) {
 	if links == 0 {
 		t.Fatal("first Consolidate recorded no links")
 	}
-	// The extractor re-returns the same candidates; a second run over the same
-	// journal must not re-link facts/skills already persisted this session.
 	if err := l.Consolidate(ctx); err != nil {
 		t.Fatalf("second Consolidate: %v", err)
 	}
@@ -135,8 +135,10 @@ func TestConsolidateReadsJournalFile(t *testing.T) {
 	mem := newRec()
 	ex := &fakeExtractor{}
 	l := NewLearner(mem, "alpha", contracts.MemoryScope{Project: "projects/g"}, ex, journal, 0)
-	_ = l.Consolidate(context.Background())
-	if ex.gotJournal == "" || ex.gotJournal[:3] != "123" {
+	if err := l.Consolidate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(ex.gotJournal, "123") {
 		t.Fatalf("extractor did not receive journal content: %q", ex.gotJournal)
 	}
 }
@@ -152,11 +154,6 @@ func TestNilExtractorMakesConsolidateNoOp(t *testing.T) {
 	}
 }
 
-// TestConsolidateResetsTransitionsOnEarlyReturn guards the deferred reset:
-// Restore appends transitions out of band between passes, and a nil-extractor
-// Learner's Consolidate returns early (before report). Without the deferred
-// reset those transitions would accumulate unbounded across passes. The defer
-// caps them on every return path.
 func TestConsolidateResetsTransitionsOnEarlyReturn(t *testing.T) {
 	mem := newRec()
 	l := NewLearner(mem, "alpha", contracts.MemoryScope{Project: "p"}, nil, "", 0)
@@ -171,7 +168,7 @@ func TestConsolidateResetsTransitionsOnEarlyReturn(t *testing.T) {
 
 func TestConsolidateContinuesPastRecordError(t *testing.T) {
 	mem := newRec()
-	mem.failOn = "facts/eco" // the shared fact fails; the private skill must still persist
+	mem.failOn = "facts/eco"
 	ex := &fakeExtractor{}
 	l := NewLearner(mem, "alpha", contracts.MemoryScope{Project: "projects/g", Agent: "agents/s"}, ex, "", 0)
 
@@ -179,7 +176,6 @@ func TestConsolidateContinuesPastRecordError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the failing candidate's error to be returned")
 	}
-	// A per-candidate failure must not abort the batch: the sibling still persists.
 	if _, ok := mem.nodes["skills/ds"]; !ok {
 		t.Fatal("candidate after the failing one was skipped")
 	}
@@ -190,12 +186,31 @@ func TestObserveTriggersConsolidateEveryN(t *testing.T) {
 	ex := &fakeExtractor{}
 	l := NewLearner(mem, "alpha", contracts.MemoryScope{Project: "p"}, ex, "", 2)
 	ctx := context.Background()
-	_ = l.Observe(ctx, contracts.Prompt{Author: "a", Content: "one"}, "r1")
+	if err := l.Observe(ctx, contracts.Prompt{Author: "a", Content: "one"}, "r1"); err != nil {
+		t.Error(err)
+	}
 	if ex.calls != 0 {
 		t.Fatalf("should not consolidate after 1 turn (every=2), calls=%d", ex.calls)
 	}
-	_ = l.Observe(ctx, contracts.Prompt{Author: "a", Content: "two"}, "r2")
+	if err := l.Observe(ctx, contracts.Prompt{Author: "a", Content: "two"}, "r2"); err != nil {
+		t.Error(err)
+	}
 	if ex.calls != 1 {
 		t.Fatalf("should consolidate on the 2nd turn, calls=%d", ex.calls)
+	}
+}
+
+func TestNilExtractorConsolidateStampsThePassAndFilesNothing(t *testing.T) {
+	t.Parallel()
+	mem := newRec()
+	l := NewLearner(mem, "alpha", contracts.MemoryScope{Project: "p"}, nil, "", 0)
+	if err := l.Consolidate(context.Background()); err != nil {
+		t.Fatalf("Consolidate: %v", err)
+	}
+	if l.lastRun.IsZero() {
+		t.Fatal("a pass with no extractor must still stamp lastRun")
+	}
+	if len(mem.nodes) != 0 {
+		t.Fatalf("a pass with no extractor filed %d nodes, want none", len(mem.nodes))
 	}
 }

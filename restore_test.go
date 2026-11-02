@@ -7,19 +7,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// restoreMem is a minimal fake Memory dedicated to Restore's tests: unlike
-// mergeMem/sweepFakeMem (which return a zero Node with no error on a missing
-// key), Recall here models the real contract Restore relies on — an absent
-// key is a genuine error, not a silent zero value.
 type restoreMem struct {
 	nodes   map[string]contracts.Node
 	records []contracts.Node
 }
 
-func newRestoreMem() *restoreMem { return &restoreMem{nodes: map[string]contracts.Node{}} }
+func newRestoreMem() *restoreMem { return &restoreMem{nodes: make(map[string]contracts.Node)} }
 
 func (m *restoreMem) Recall(_ context.Context, key string, _ int) (contracts.Subgraph, error) {
 	n, ok := m.nodes[key]
@@ -28,11 +24,13 @@ func (m *restoreMem) Recall(_ context.Context, key string, _ int) (contracts.Sub
 	}
 	return contracts.Subgraph{Root: n}, nil
 }
+
 func (m *restoreMem) Record(_ context.Context, n contracts.Node) error {
 	m.nodes[n.Key] = n
 	m.records = append(m.records, n)
 	return nil
 }
+
 func (m *restoreMem) Search(context.Context, contracts.Query) ([]contracts.Node, error) {
 	return nil, nil
 }
@@ -40,10 +38,6 @@ func (m *restoreMem) Links(context.Context, string, string, string) error { retu
 func (m *restoreMem) Unlink(context.Context, string, string) error        { return nil }
 func (m *restoreMem) Close() error                                        { return nil }
 
-// TestForceRestoreDropsMergedIntoEdge locks the G4 follow-up: force-restoring a
-// merged original must not only clear Meta[MetaMergedInto] but also drop the
-// residual merged-into edge the merge pass created (via the new Unlink port
-// verb). Uses recMem, whose Unlink actually removes from its link store.
 func TestForceRestoreDropsMergedIntoEdge(t *testing.T) {
 	ctx := context.Background()
 	mem := newRec()
@@ -159,9 +153,6 @@ func TestLearnerRestoreAppendsTransition(t *testing.T) {
 	}
 }
 
-// TestLearnerRestoreRecordsRealPriorState proves the audit From is the node's
-// observed prior state, not a hardcoded "archived": restoring a merely-stale
-// node must record From=stale.
 func TestLearnerRestoreRecordsRealPriorState(t *testing.T) {
 	m := newRestoreMem()
 	m.nodes["facts/a"] = contracts.Node{Key: "facts/a", Meta: map[string]string{

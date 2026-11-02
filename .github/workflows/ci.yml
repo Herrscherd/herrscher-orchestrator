@@ -5,41 +5,17 @@ on:
     branches: [master]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  test:
+  book:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
-          go-version: "1.27.3"
-
-      # This is a pure plugin whose only dependency is herrscher-contracts. A PR
-      # often rides on an unpublished contracts commit (a pseudo-version in
-      # go.mod), so build it against the matching contracts ref via go.work:
-      # the contracts branch with the same name when it exists, else its default.
-      - name: Check out herrscher-contracts
-        uses: actions/checkout@v7
-        with:
-          repository: Herrscherd/herrscher-contracts
-          ref: ${{ github.head_ref }}
-          path: _deps/herrscher-contracts
-          token: ${{ secrets.CONTRACTS_TOKEN || github.token }}
-        continue-on-error: true
-
-      - name: Use local contracts when present
-        run: |
-          if [ -d _deps/herrscher-contracts ]; then
-            go work init . _deps/herrscher-contracts
-          fi
-
-      # Own sources only: _deps holds a checked-out dependency, whose formatting
-      # is its own repo's business. Downstream repos vendor this one the same
-      # way and gofmt the tree, so unformatted files here redden *their* CI.
-      - name: gofmt
-        run: |
-          bad="$(gofmt -l . | grep -v '^_deps/' || true)"
-          [ -z "$bad" ] || { echo "$bad"; exit 1; }
-      - run: go vet ./...
-      - run: go test ./...
+          go-version-file: go.mod
+          cache: true
+      - name: Quality chain of the go-book
+        run: scripts/check.sh

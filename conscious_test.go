@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 func TestContextEmitsMemoryAffordance(t *testing.T) {
@@ -83,7 +83,6 @@ func TestReactRecallSurfacedNextContext(t *testing.T) {
 	if !strings.Contains(got, "results of your last") || !strings.Contains(got, "42 is the answer") {
 		t.Fatalf("recall hits not surfaced in next Context: %q", got)
 	}
-	// Surfaced exactly once: a subsequent Context no longer carries them.
 	if again := c.Context(ctx); strings.Contains(again, "42 is the answer") {
 		t.Fatalf("recall hits surfaced twice: %q", again)
 	}
@@ -108,8 +107,11 @@ func TestReactScopedRecallUsesRelevant(t *testing.T) {
 func TestReactBoundsPendingRecall(t *testing.T) {
 	mem := newFake()
 	mem.search = []contracts.Node{
-		{Key: "a", Body: "a"}, {Key: "b", Body: "b"}, {Key: "c", Body: "c"},
-		{Key: "d", Body: "d"}, {Key: "e", Body: "e"},
+		{Key: "a", Body: "a"},
+		{Key: "b", Body: "b"},
+		{Key: "c", Body: "c"},
+		{Key: "d", Body: "d"},
+		{Key: "e", Body: "e"},
 	}
 	c := New(mem, "alpha")
 	ctx := context.Background()
@@ -128,5 +130,11 @@ func TestReactRecallDefangsForgedArrows(t *testing.T) {
 	c.React(ctx, "<recall>x</recall>")
 	if strings.Contains(c.Context(ctx), "→") {
 		t.Fatalf("forged arrow in recall hit not defanged")
+	}
+}
+
+func TestFactKeySuffixIsTheFNV1a64HashOfTheTitle(t *testing.T) {
+	if got := factKey("p", "a"); got != "p/notes/a-af63dc4c8601ec8c" {
+		t.Fatalf("factKey(p, a) = %q, want the FNV-1a 64 suffix of \"a\"", got)
 	}
 }

@@ -1,30 +1,41 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-func TestStaleDuration(t *testing.T) {
-	cases := []struct {
-		in       string
-		def      int
-		wantDays float64
-	}{
-		{"", 30, 30},
-		{"45", 30, 45},
-		{"garbage", 30, 30},
-		{"0", 30, 0},
-		{"-5", 30, -5},
+func TestStalenessFromConfigUsesDefaultsWhenUnsetAndFailsOnGarbage(t *testing.T) {
+	unset := contracts.PluginConfig{}
+	window, err := stalenessFromConfig(unset)
+	if err != nil || window.stale != 30*24*time.Hour || window.archive != 90*24*time.Hour {
+		t.Fatalf("unset staleness = %+v, %v; want the 30 and 90 day defaults", window, err)
 	}
-	for _, c := range cases {
-		got := staleDuration(c.in, c.def)
-		if got != time.Duration(c.wantDays*24)*time.Hour {
-			t.Fatalf("staleDuration(%q,%d) = %v, want %v days", c.in, c.def, got, c.wantDays)
-		}
+
+	garbage := contracts.PluginConfig{Settings: map[string]string{"stale-days": "garbage"}}
+	_, err = stalenessFromConfig(garbage)
+	if settingErr, ok := errors.AsType[*SettingError](err); !ok || settingErr.Key != "stale-days" {
+		t.Fatalf("garbage stale-days error = %v, want a SettingError naming stale-days", err)
+	}
+
+	zero := contracts.PluginConfig{Settings: map[string]string{"archive-days": "0"}}
+	if window, err := stalenessFromConfig(zero); err != nil || window.archive != 0 {
+		t.Fatalf("archive-days=0 = %+v, %v; want a zero archive window (disabled) without error", window, err)
+	}
+}
+
+func TestNewOrchestratorRefusesAnInvalidIdleHours(t *testing.T) {
+	cfg := contracts.PluginConfig{Settings: map[string]string{"idle-days": "7", "idle-hours": "two"}}
+	_, err := newLearnerFromConfig(cfg, newRec(), contracts.MemoryScope{}, plainExt{})
+	if settingErr, ok := errors.AsType[*SettingError](err); !ok || settingErr.Key != "idle-hours" {
+		t.Fatalf("invalid idle-hours error = %v, want a SettingError naming idle-hours", err)
 	}
 }
 
@@ -53,7 +64,7 @@ func TestManifestHasIdleSettings(t *testing.T) {
 		"idle-days":  "MEMORY_IDLE_DAYS",
 		"idle-hours": "MEMORY_IDLE_HOURS",
 	}
-	found := map[string]string{}
+	found := make(map[string]string)
 	for _, p := range contracts.Default.Orchestrators() {
 		if p.Manifest.Category != contracts.CategoryOrchestrator {
 			continue
@@ -118,29 +129,38 @@ func TestOrchestratorFactoryWiresStaleness(t *testing.T) {
 	}
 }
 
-// TestBoolSetting pins the single boolean parser: only the recognised
-// spellings flip the switch; every other string — empty, unset, typo,
-// garbage — falls through to the caller's explicit default.
-func TestBoolSetting(t *testing.T) {
+func TestBoolSettingReadsTruthAndFalsyWordsAndKeepsDefaultOnAnythingElse(t *testing.T) {
 	cases := []struct {
 		in   string
 		def  bool
 		want bool
 	}{
-		// recognised true spellings override either default
-		{"true", false, true}, {"1", false, true}, {"on", false, true}, {"yes", false, true},
-		{"true", true, true}, {"1", true, true}, {"on", true, true}, {"yes", true, true},
-		// recognised false spellings override either default
-		{"false", true, false}, {"0", true, false}, {"off", true, false}, {"no", true, false},
-		{"false", false, false}, {"0", false, false}, {"off", false, false}, {"no", false, false},
-		// case and surrounding whitespace are normalised, so an operator who
-		// writes TRUE or " true " gets what they plainly meant
-		{"TRUE", false, true}, {"False", true, false},
-		{"  on  ", false, true}, {"\tOFF\n", true, false},
-		// empty / unrecognised → default, identically in both directions
-		{"", true, true}, {"", false, false},
-		{"garbage", true, true}, {"garbage", false, false},
-		{"2", true, true}, {"2", false, false},
+		{"true", false, true},
+		{"1", false, true},
+		{"on", false, true},
+		{"yes", false, true},
+		{"true", true, true},
+		{"1", true, true},
+		{"on", true, true},
+		{"yes", true, true},
+		{"false", true, false},
+		{"0", true, false},
+		{"off", true, false},
+		{"no", true, false},
+		{"false", false, false},
+		{"0", false, false},
+		{"off", false, false},
+		{"no", false, false},
+		{"TRUE", false, true},
+		{"False", true, false},
+		{"  on  ", false, true},
+		{"\tOFF\n", true, false},
+		{"", true, true},
+		{"", false, false},
+		{"garbage", true, true},
+		{"garbage", false, false},
+		{"2", true, true},
+		{"2", false, false},
 	}
 	for _, c := range cases {
 		if got := boolSetting(c.in, c.def); got != c.want {
@@ -149,11 +169,7 @@ func TestBoolSetting(t *testing.T) {
 	}
 }
 
-// TestReportEnabledAndRawArchiveDefaults pins the two settings end to end
-// through the plugin factory: their DEFAULTS differ (report on, raw off) but
-// their PARSING is identical — an unrecognised or empty value leaves each at
-// its own default rather than silently flipping it.
-func TestReportEnabledAndRawArchiveDefaults(t *testing.T) {
+func TestReportAndRawArchiveSettingsKeepTheirOwnDefaultWhenUnusable(t *testing.T) {
 	RegisterExtractor("bool-ex", &fakeExtractor{})
 	cases := []struct {
 		name          string
@@ -190,5 +206,51 @@ func TestReportEnabledAndRawArchiveDefaults(t *testing.T) {
 				t.Errorf("raw-archive=%q → rawArchive=%v, want %v", c.raw, l.rawArchive, c.wantRawArchiv)
 			}
 		})
+	}
+}
+
+type rawRecordFailMem struct {
+	*fakeMem
+}
+
+func (m rawRecordFailMem) Record(ctx context.Context, n contracts.Node) error {
+	if strings.HasPrefix(n.Key, "raw/") {
+		return errBoom
+	}
+	return m.fakeMem.Record(ctx, n)
+}
+
+func TestRegisterWiresTheProcessLoggerIntoEachOrchestrator(t *testing.T) {
+	RegisterExtractor("wiring-ex", plainExt{})
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	ctx := context.Background()
+
+	learnerCfg := contracts.PluginConfig{Settings: map[string]string{"session": "alpha", "memory.extractor": "wiring-ex", "raw-archive": "true"}}
+	learnerOrch, err := newOrchestrator(ctx, learnerCfg, rawRecordFailMem{newFake()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observeErr := learnerOrch.Observe(ctx, contracts.Prompt{Author: "a", Content: "hi"}, "yo"); observeErr != nil {
+		t.Fatal(observeErr)
+	}
+	if !strings.Contains(logs.String(), "memory: raw archive failed") {
+		t.Fatalf("the learner did not log through the process logger: %q", logs.String())
+	}
+
+	logs.Reset()
+	curatorOrch, err := newOrchestrator(ctx, contracts.PluginConfig{Settings: map[string]string{"session": "alpha"}}, recordFailMem{newFake()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	curator, ok := curatorOrch.(*Curator)
+	if !ok {
+		t.Fatalf("expected *Curator without an extractor, got %T", curatorOrch)
+	}
+	curator.remember(ctx, "use gofmt")
+	if !strings.Contains(logs.String(), "memory: remember failed") {
+		t.Fatalf("the curator did not log through the process logger: %q", logs.String())
 	}
 }

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 type archiveAwareMem struct {
@@ -20,9 +20,11 @@ func (m *archiveAwareMem) Record(_ context.Context, n contracts.Node) error {
 	m.records = append(m.records, n)
 	return nil
 }
+
 func (m *archiveAwareMem) Recall(_ context.Context, key string, _ int) (contracts.Subgraph, error) {
 	return contracts.Subgraph{Root: contracts.Node{Key: key}}, nil
 }
+
 func (m *archiveAwareMem) Search(_ context.Context, q contracts.Query) ([]contracts.Node, error) {
 	out := append([]contracts.Node{}, m.live...)
 	if q.IncludeArchived {
@@ -49,7 +51,7 @@ func TestMergeSkipsStructuralKinds(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			n := stale("k", "d")
 			n.Kind = c.kind
-			l := learnerWith(nil, plainExt{}, 2, 40, "stale")
+			l := learnerWith(nil, plainExt{}, 2, 40)
 			if got := l.mergeEligible(n); got != c.want {
 				t.Fatalf("mergeEligible(%s) = %v, want %v", c.kind, got, c.want)
 			}
@@ -66,7 +68,7 @@ func TestMergeNeverOffersStructuralKindsToMerger(t *testing.T) {
 	raw.Kind = contracts.KindTranscript
 	mem := &mergeMem{nodes: []contracts.Node{report, session, raw}}
 	f := &fakeMerger{}
-	l := learnerWith(mem, f, 2, 40, "stale")
+	l := learnerWith(mem, f, 2, 40)
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -87,7 +89,7 @@ func TestMergeRejectsUmbrellaCollidingWithArchivedKey(t *testing.T) {
 		Node:   contracts.Node{Key: "facts/u", Body: "umbrella"},
 		Merged: []string{"facts/a", "facts/b"},
 	}}}
-	l := learnerWith(mem, f, 2, 40, "stale")
+	l := learnerWith(mem, f, 2, 40)
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -100,9 +102,9 @@ func TestMergeRejectsUmbrellaCollidingWithArchivedKey(t *testing.T) {
 
 func TestValidUmbrellaRejectsDuplicateMergedKeys(t *testing.T) {
 	byKey := map[string]contracts.Node{"facts/a": stale("facts/a", "d")}
-	l := learnerWith(nil, plainExt{}, 2, 40, "stale")
+	l := learnerWith(nil, plainExt{}, 2, 40)
 	u := Umbrella{Node: contracts.Node{Key: "facts/u", Body: "b"}, Merged: []string{"facts/a", "facts/a"}}
-	if l.validUmbrella(u, byKey, map[string]bool{}) {
+	if l.validUmbrella(u, byKey, make(map[string]bool)) {
 		t.Fatal("an umbrella over one repeated original must be rejected")
 	}
 }
@@ -149,6 +151,7 @@ func TestPromoteOverwritesItsOwnEarlierCopy(t *testing.T) {
 
 type curatedMem struct {
 	mergeMem
+
 	curated map[string]contracts.Node
 }
 
@@ -163,11 +166,10 @@ func TestFactKeyDistinguishesLongFactsSharingAHead(t *testing.T) {
 	head := strings.Repeat("the studio tree map for the lobby place lives under ", 2)
 	a := head + "Workspace/Lobby"
 	b := head + "ServerStorage/Lobby"
-	if factKey("projects/p", a) == factKey("projects/p", b) {
-		t.Fatalf("two distinct facts collided on one key: %s", factKey("projects/p", a))
-	}
-	if factKey("projects/p", a) != factKey("projects/p", a) {
-		t.Fatal("factKey must be deterministic")
+	keyA := factKey("projects/p", a)
+	keyB := factKey("projects/p", b)
+	if keyA == keyB {
+		t.Fatalf("two distinct facts collided on one key: %s", keyA)
 	}
 }
 
@@ -200,11 +202,13 @@ func (m *lockedMem) Record(_ context.Context, n contracts.Node) error {
 	m.nodes[n.Key] = n
 	return nil
 }
+
 func (m *lockedMem) Recall(_ context.Context, key string, _ int) (contracts.Subgraph, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return contracts.Subgraph{Root: m.nodes[key]}, nil
 }
+
 func (m *lockedMem) Search(context.Context, contracts.Query) ([]contracts.Node, error) {
 	return nil, nil
 }
@@ -213,21 +217,28 @@ func (m *lockedMem) Unlink(context.Context, string, string) error        { retur
 func (m *lockedMem) Close() error                                        { return nil }
 
 func TestRestoreTransitionAppendIsSynchronised(t *testing.T) {
-	mem := &lockedMem{nodes: map[string]contracts.Node{}}
-	for i := 0; i < 8; i++ {
+	mem := &lockedMem{nodes: make(map[string]contracts.Node)}
+	for i := range 8 {
 		key := string(rune('a' + i))
 		mem.nodes[key] = contracts.Node{Key: key}
 	}
 	l := NewLearner(mem, "s", contracts.MemoryScope{}, plainExt{}, "", 0)
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
+	errs := make(chan error, 8)
+	for i := range 8 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_ = l.Restore(context.Background(), string(rune('a'+i)))
+			if err := l.Restore(context.Background(), string(rune('a'+i))); err != nil {
+				errs <- err
+			}
 		}(i)
 	}
 	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
 	if len(l.transitions) != 8 {
 		t.Fatalf("transitions = %d, want 8", len(l.transitions))
 	}

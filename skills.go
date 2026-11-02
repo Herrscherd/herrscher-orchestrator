@@ -2,68 +2,44 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// maxSkillNameRunes caps a skill's key segment, and with it the directory the
-// host projects it into. The model chooses the name, so without a cap one long
-// sentence would become one very long path.
 const maxSkillNameRunes = 60
 
-// skillMarker matches the in-band marker the model emits to write one of its own
-// skills. It mirrors rememberMarker and recallMarker in tolerance (case, space,
-// multi-line) and adds the one thing they do not need: a name, because a fact is
-// identified by its content and a procedure by what you call it.
+// ErrNotSkill is wrapped by ApproveSkill when the node is not a skill.
+var ErrNotSkill = errors.New("not a skill")
+
 var skillMarker = regexp.MustCompile(`(?is)<\s*skill\s+name\s*=\s*"([^"]*)"\s*>(.*?)<\s*/\s*skill\s*>`)
 
-// skillPreamble is the sentence appended to memoryPreamble when the feature is
-// on. It is separate so a build with the feature off never advertises a marker
-// that would be ignored, which would teach the model a habit that does nothing.
 const skillPreamble = ` Write down a procedure you had to work out, so a later session starts where this one ended, ` +
 	`with <skill name="short-name">the steps</skill>; re-emitting the same name revises it.`
 
-// MetaApproved, set on a KindSkill node, is a human's answer to the only question
-// a self-authored skill raises: may every agent of this project run it. A skill's
-// body comes from the journal, which carries chat messages, repository files and
-// web pages, so a promoted one would turn "what this agent believes" into "what
-// every agent executes". Private is free; shared is approved.
-//
-// Orchestrator-internal, like MetaPromotedTo and MetaMergedInto: obsidian stores
-// Meta generically, so no contracts change is needed.
+// MetaApproved is set on a skill to approve sharing it with the project's
+// agents. Set it through ApproveSkill.
 const MetaApproved = "approved"
 
-// SetLearnedSkills turns the self-authored-skill feature on or off. Off (the
-// default) leaves every surface inert: no marker, no preamble sentence, no
-// normalisation of extractor candidates, and LearnedSkills answers nothing.
+// SetLearnedSkills turns self-authored skills on or off. Off, the default,
+// leaves every skill surface inert.
 func (c *Curator) SetLearnedSkills(on bool) { c.learnedSkills = on }
 
-// recordSkill writes one skill under the private scope. Best-effort in the same
-// sense as remember: a memory failure is dropped, never returned, because the
-// turn it happened in has already produced a reply someone is waiting for.
 func (c *Curator) recordSkill(ctx context.Context, rawName, body string) {
 	name := skillName(rawName)
 	body = strings.TrimSpace(body)
-	// An empty body would blank the previous version through the upsert, so a
-	// truncated or malformed marker must not be able to erase a working skill.
 	if name == "" || body == "" {
 		return
 	}
-	// A skill needs a private scope to live in. Falling back to the project root,
-	// the way contracts.RecordPrivate does for a fact, would put instructions every
-	// agent of the project executes one marker away from any session, with no
-	// approval anywhere in the path. A fact crossing that way is a fact; a skill
-	// crossing that way is the boundary this feature is built around.
 	scope := c.scopeOf()
 	if scope.Agent == "" {
-		slog.Warn("memory: a skill was written by a session with no private memory root, so it was dropped rather than shared with the project",
+		c.log.Warn("memory: a skill was written by a session with no private memory root, so it was dropped rather than shared with the project",
 			"skill", name, "project", scope.Project)
 		return
 	}
@@ -73,27 +49,14 @@ func (c *Curator) recordSkill(ctx context.Context, rawName, body string) {
 		Kind:  contracts.KindSkill,
 		Title: name,
 		Body:  body,
-		// Meta is rebuilt rather than carried over, which is what makes an approval
-		// bind to the body it was granted for: revising a skill drops MetaApproved,
-		// so a skill approved once cannot be quietly rewritten into something else
-		// and promoted on the strength of the old decision. capturedAt below is the
-		// single deliberate exception.
-		Meta: map[string]string{contracts.MetaLastSeen: stamp, "capturedAt": stamp},
+		Meta:  map[string]string{contracts.MetaLastSeen: stamp, metaCapturedAt: stamp},
 	}
-	// capturedAt is preserved on revision rather than restamped: promoteEligible
-	// measures maturity as lastSeen minus capturedAt, so moving it forward every
-	// time the skill is rewritten would reset the clock, and a skill revised often
-	// would be the one that never matures.
-	if sg, err := c.mem.Recall(ctx, node.Key, 0); err == nil && sg.Root.Meta["capturedAt"] != "" {
-		node.Meta["capturedAt"] = sg.Root.Meta["capturedAt"]
+	if sg, err := c.mem.Recall(ctx, node.Key, 0); err == nil && sg.Root.Meta[metaCapturedAt] != "" {
+		node.Meta[metaCapturedAt] = sg.Root.Meta[metaCapturedAt]
 	}
-	_ = contracts.RecordPrivate(ctx, c.mem, scope, node)
+	c.logFailure("memory: record private skill failed", contracts.RecordPrivate(ctx, c.mem, scope, node))
 }
 
-// skillName folds a model-supplied name into a key segment. It is the same
-// folding contracts.NormalizeScope applies, minus its "scope" fallback: a name
-// that reduces to nothing must yield nothing, because a herd of unnamed skills
-// all landing on one key would overwrite each other in silence.
 func skillName(raw string) string {
 	nameable := false
 	for _, r := range raw {
@@ -112,126 +75,102 @@ func skillName(raw string) string {
 	return name
 }
 
-// asLearnedSkill stamps KindSkill on an extractor candidate that is one. The
-// decision lives here rather than in the extractor for two reasons: the
-// extraction module is the closed half of the moat and a policy about node kinds
-// has no business in it, and a private candidate can legitimately be a private
-// *fact* rather than a procedure. The key prefix is the discriminant, read as a
-// path segment so "skillsets/x" is not mistaken for a skill.
-//
-// hasPrivateScope is the same guard recordSkill applies: without an agent root,
-// contracts.RecordPrivate files a "private" candidate under the project instead,
-// and a skill filed there is executed by every agent of the project without
-// anyone approving it. The candidate is left the ordinary node it was, so a
-// session with no private root learns exactly what it learned before.
-func asLearnedSkill(c Candidate, hasPrivateScope bool) Candidate {
-	if !c.Private || !hasPrivateScope {
-		return c
+func asLearnedSkill(candidate Candidate, hasPrivateScope bool) Candidate {
+	if !candidate.Private || !hasPrivateScope {
+		return candidate
 	}
-	if !strings.HasPrefix(strings.TrimPrefix(c.Node.Key, "/"), "skills/") {
-		return c
+	if !strings.HasPrefix(strings.TrimPrefix(candidate.Node.Key, "/"), "skills/") {
+		return candidate
 	}
-	c.Node.Kind = contracts.KindSkill
-	return c
+	candidate.Node.Kind = contracts.KindSkill
+	return candidate
 }
 
-// LearnedSkills answers the active skills this session should have on disk: the
-// agent's private ones and the project's shared ones, in one list.
-//
-// It is an OPTIONAL capability, discovered host-side by type assertion like
-// SetScope and Consolidate before it, so contracts.Orchestrator gains no method
-// and an orchestrator without it degrades to "no learned skills" rather than
-// failing.
-//
-// Two rules are applied here rather than host-side, because they are about
-// scopes and the host does not reason about scopes:
-//
-//   - Only active nodes are returned. A stale or archived skill must leave the
-//     disk, or the staleness machine would be a label with no effect.
-//   - On a name collision the private copy wins: an agent that refined its own
-//     version of a shared procedure meant to use its version.
+// LearnedSkills returns the active skills this session should have on disk: its
+// private skills and the project's shared ones. It is an optional capability,
+// found by type assertion. On a name collision the private copy wins.
 func (c *Curator) LearnedSkills(ctx context.Context) ([]contracts.Node, error) {
 	if c.mem == nil || !c.learnedSkills {
 		return nil, nil
 	}
 	scope := c.scopeOf()
-	var (
-		sg  contracts.Subgraph
-		err error
-	)
-	switch {
-	case scope.Project != "":
-		sg, err = contracts.RecallScoped(ctx, c.mem, scope, 1)
-	case scope.Agent != "":
-		// RecallScoped roots on the project, so a session that has an agent but no
-		// settled project reads the private root directly rather than reading none.
-		sg, err = c.mem.Recall(ctx, scope.Agent, 1)
-	default:
+	if scope.Project == "" && scope.Agent == "" {
 		return nil, nil
 	}
+	nodes, err := c.recallSkills(ctx, scope)
 	if err != nil {
 		return nil, err
 	}
-	var private, shared []contracts.Node
-	for _, n := range sg.Nodes {
-		if n.Kind != contracts.KindSkill {
-			continue
-		}
-		if s := n.Meta[contracts.MetaState]; s != "" && s != contracts.StateActive {
-			continue
-		}
-		if scope.Agent != "" && strings.HasPrefix(n.Key, scope.Agent+"/") {
-			private = append(private, n)
-			continue
-		}
-		shared = append(shared, n)
-	}
-	// Sorted so the projection is byte-stable across runs: an unstable order would
-	// rewrite identical files and make a diff of the projection root meaningless.
-	sort.Slice(private, func(i, j int) bool { return private[i].Key < private[j].Key })
-	sort.Slice(shared, func(i, j int) bool { return shared[i].Key < shared[j].Key })
-
-	seen := make(map[string]string, len(private)+len(shared))
-	out := make([]contracts.Node, 0, len(private)+len(shared))
-	for _, n := range append(private, shared...) {
-		name := skillTail(n.Key)
-		if name == "" || seen[name] != "" {
-			continue
-		}
-		seen[name] = n.Key
-		out = append(out, n)
-	}
+	out := dedupeSkills(partitionSkills(nodes, scope.Agent))
 	c.projectedMu.Lock()
-	c.projected = seen
+	c.projected = projectedSkills(out)
 	c.projectedMu.Unlock()
 	return out, nil
 }
 
-// SkillUsed refreshes lastSeen on each named skill. The host calls it with the
-// names the skills engine saw activated in a reply, which makes this the whole of
-// "improvement through use" in the sense that can actually be measured: nothing
-// here judges whether the skill helped, only that it was reached for.
-//
-// The names are resolved against what LearnedSkills last answered rather than
-// rebuilt from the scope roots, and that is what makes it correct rather than
-// merely cheap. A skill's Key depends on how it was written: the <skill> marker
-// keys under the agent root, while an extractor candidate keeps the flat key it
-// was distilled with and is only *linked* under that root. A derived key finds
-// the first and silently misses the second, so a skill the agent used every day
-// would age out as unused. Resolving through the projection also means a repo or
-// machine-wide skill, which the engine reports by the same name and which no node
-// backs, costs no lookup at all.
-//
-// Two things fall out of that, and they are why this is worth a seam:
-//
-//   - The staleness sweep archives the skill nobody activates and leaves the one
-//     that serves. A useless skill dies on its own, reversibly, with no retention
-//     policy written anywhere.
-//   - promoteEligible already requires lastSeen to have advanced past capturedAt.
-//     A skill written once and never used therefore never becomes promotable, and
-//     the existing eligibility rule reads, unmodified, as "this skill has served".
-//
-// Best-effort and silent: it runs after the reply is already on its way out.
+func (c *Curator) recallSkills(ctx context.Context, scope contracts.MemoryScope) ([]contracts.Node, error) {
+	if scope.Project != "" {
+		sg, err := contracts.RecallScoped(ctx, c.mem, scope, 1)
+		return sg.Nodes, err
+	}
+	sg, err := c.mem.Recall(ctx, scope.Agent, 1)
+	return sg.Nodes, err
+}
+
+func partitionSkills(nodes []contracts.Node, agent string) skillPartition {
+	var part skillPartition
+	for _, node := range nodes {
+		if !isActiveSkill(node) {
+			continue
+		}
+		if agent != "" && strings.HasPrefix(node.Key, agent+"/") {
+			part.private = append(part.private, node)
+			continue
+		}
+		part.shared = append(part.shared, node)
+	}
+	return part
+}
+
+func isActiveSkill(node contracts.Node) bool {
+	if node.Kind != contracts.KindSkill {
+		return false
+	}
+	state := node.Meta[contracts.MetaState]
+	return state == "" || state == contracts.StateActive
+}
+
+func dedupeSkills(part skillPartition) []contracts.Node {
+	sort.Slice(part.private, func(i, j int) bool { return part.private[i].Key < part.private[j].Key })
+	sort.Slice(part.shared, func(i, j int) bool { return part.shared[i].Key < part.shared[j].Key })
+	out := make([]contracts.Node, 0, len(part.private)+len(part.shared))
+	seen := make(map[string]bool, len(part.private)+len(part.shared))
+	for _, node := range append(part.private, part.shared...) {
+		name := skillTail(node.Key)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, node)
+	}
+	return out
+}
+
+func projectedSkills(skills []contracts.Node) map[string]string {
+	projected := make(map[string]string, len(skills))
+	for _, node := range skills {
+		projected[skillTail(node.Key)] = node.Key
+	}
+	return projected
+}
+
+type skillPartition struct {
+	private []contracts.Node
+	shared  []contracts.Node
+}
+
+// SkillUsed notes that the named skills were used. It does nothing unless
+// learned skills are on, and it is best-effort and silent.
 func (c *Curator) SkillUsed(ctx context.Context, names []string) {
 	if c.mem == nil || !c.learnedSkills || len(names) == 0 {
 		return
@@ -248,48 +187,40 @@ func (c *Curator) SkillUsed(ctx context.Context, names []string) {
 		if key == "" {
 			continue
 		}
-		sg, err := c.mem.Recall(ctx, key, 0)
-		// Guarded on the kind, not just the key: the projection is a session-old
-		// answer, and a node that has since become something else must not be
-		// rewritten by a usage stamp.
-		if err != nil || sg.Root.Kind != contracts.KindSkill {
+		recalled, err := c.mem.Recall(ctx, key, 0)
+		if err != nil || recalled.Root.Kind != contracts.KindSkill {
 			continue
 		}
-		n := sg.Root
-		if n.Meta == nil {
-			n.Meta = map[string]string{}
+		root := recalled.Root
+		if root.Meta == nil {
+			root.Meta = make(map[string]string)
 		}
-		n.Meta[contracts.MetaLastSeen] = stamp
-		_ = c.mem.Record(ctx, n)
+		root.Meta[contracts.MetaLastSeen] = stamp
+		c.logFailure("memory: stamp skill failed", c.mem.Record(ctx, root))
 	}
 }
 
-// ApproveSkill sets or clears the approval mark on the skill at key. It is a free
-// function over a Memory rather than a Curator method because the host CLI runs
-// it outside any session, exactly like Restore.
-//
-// Revoking does not undo a promotion that already happened: the shared copy is a
-// node of its own, unmade with memory unlink and memory restore. Revoking only
-// stops the next one, which is what a revoke can honestly promise.
-func ApproveSkill(ctx context.Context, m contracts.Memory, key string, approve bool) error {
-	sg, err := m.Recall(ctx, key, 0)
+// ApproveSkill sets or clears the approval mark on the skill at key. It works
+// outside a session, like Restore. Revoking does not undo an earlier promotion;
+// it stops the next one.
+func ApproveSkill(ctx context.Context, memory contracts.Memory, key string, approve bool) error {
+	recalled, err := memory.Recall(ctx, key, 0)
 	if err != nil {
 		return fmt.Errorf("approve %s: %w", key, err)
 	}
-	if sg.Root.Kind != contracts.KindSkill {
-		return fmt.Errorf("approve %s: not a skill (kind %q)", key, sg.Root.Kind)
+	if recalled.Root.Kind != contracts.KindSkill {
+		return fmt.Errorf("approve %s: %w (kind %q)", key, ErrNotSkill, recalled.Root.Kind)
 	}
-	n := sg.Root
-	if n.Meta == nil {
-		n.Meta = map[string]string{}
+	root := recalled.Root
+	if root.Meta == nil {
+		root.Meta = make(map[string]string)
 	}
 	if approve {
-		n.Meta[MetaApproved] = "true"
+		root.Meta[MetaApproved] = "true"
 	} else {
-		delete(n.Meta, MetaApproved)
+		delete(root.Meta, MetaApproved)
 	}
-	return m.Record(ctx, n)
+	return memory.Record(ctx, root)
 }
 
-// skillTail is the name segment of a skill key ("agents/a/skills/x" -> "x").
 func skillTail(key string) string { return key[strings.LastIndex(key, "/")+1:] }

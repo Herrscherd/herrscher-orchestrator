@@ -6,21 +6,22 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 type sweepFakeMem struct {
 	nodes  map[string]contracts.Node
 	writes int
-	failOn string // key whose Record returns an error (node is not stored)
+	failOn string
 }
 
-func newSweepFakeMem() *sweepFakeMem { return &sweepFakeMem{nodes: map[string]contracts.Node{}} }
+func newSweepFakeMem() *sweepFakeMem { return &sweepFakeMem{nodes: make(map[string]contracts.Node)} }
 
-func (f *sweepFakeMem) Recall(ctx context.Context, key string, depth int) (contracts.Subgraph, error) {
+func (f *sweepFakeMem) Recall(_ context.Context, key string, _ int) (contracts.Subgraph, error) {
 	return contracts.Subgraph{Root: f.nodes[key]}, nil
 }
-func (f *sweepFakeMem) Record(ctx context.Context, n contracts.Node) error {
+
+func (f *sweepFakeMem) Record(_ context.Context, n contracts.Node) error {
 	if n.Key == f.failOn {
 		return errors.New("record failed")
 	}
@@ -28,7 +29,8 @@ func (f *sweepFakeMem) Record(ctx context.Context, n contracts.Node) error {
 	f.nodes[n.Key] = n
 	return nil
 }
-func (f *sweepFakeMem) Search(ctx context.Context, q contracts.Query) ([]contracts.Node, error) {
+
+func (f *sweepFakeMem) Search(_ context.Context, q contracts.Query) ([]contracts.Node, error) {
 	var out []contracts.Node
 	for _, n := range f.nodes {
 		if n.Meta[contracts.MetaState] == contracts.StateArchived && !q.IncludeArchived {
@@ -38,9 +40,9 @@ func (f *sweepFakeMem) Search(ctx context.Context, q contracts.Query) ([]contrac
 	}
 	return out, nil
 }
-func (f *sweepFakeMem) Links(ctx context.Context, from, to, rel string) error { return nil }
-func (f *sweepFakeMem) Unlink(context.Context, string, string) error          { return nil }
-func (f *sweepFakeMem) Close() error                                          { return nil }
+func (f *sweepFakeMem) Links(_ context.Context, _, _, _ string) error { return nil }
+func (f *sweepFakeMem) Unlink(context.Context, string, string) error  { return nil }
+func (f *sweepFakeMem) Close() error                                  { return nil }
 
 func seed(f *sweepFakeMem, key string, ageDays int, now time.Time) {
 	f.nodes[key] = contracts.Node{Key: key, Meta: map[string]string{
@@ -60,8 +62,6 @@ func TestSweepTransitions(t *testing.T) {
 	if err := c.Sweep(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	// "fresh" is already active (absent state == active per NextState) and must
-	// not be churned into an explicit "active" write — see TestSweepNoChurn.
 	want := map[string]string{"old": contracts.StateStale, "ancient": contracts.StateArchived}
 	for k, w := range want {
 		if got := f.nodes[k].Meta[contracts.MetaState]; got != w {
@@ -74,9 +74,6 @@ func TestSweepTransitions(t *testing.T) {
 }
 
 func TestSweepSkipsReportNodes(t *testing.T) {
-	// Audit reports are artifacts, not lifecycle-managed memory. Aging one would
-	// append a sweep transition, which report() would then persist as a fresh
-	// report — a self-feeding loop. An old report node must be left untouched.
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	f := newSweepFakeMem()
 	f.nodes["reports/old"] = contracts.Node{Key: "reports/old", Kind: ReportKind, Meta: map[string]string{
@@ -98,7 +95,7 @@ func TestSweepSkipsReportNodes(t *testing.T) {
 func TestSweepNoChurn(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	f := newSweepFakeMem()
-	seed(f, "fresh", 1, now) // already active (absent state == active)
+	seed(f, "fresh", 1, now)
 	c := NewScoped(f, "s", contracts.MemoryScope{})
 	c.now = func() time.Time { return now }
 	if err := c.Sweep(context.Background()); err != nil {
@@ -112,8 +109,8 @@ func TestSweepNoChurn(t *testing.T) {
 func TestSweepContinuesPastRecordError(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	f := newSweepFakeMem()
-	seed(f, "bad", 45, now)      // would transition → stale, but its write fails
-	seed(f, "ancient", 200, now) // must still transition regardless of iteration order
+	seed(f, "bad", 45, now)
+	seed(f, "ancient", 200, now)
 	f.failOn = "bad"
 
 	c := NewScoped(f, "s", contracts.MemoryScope{})
@@ -122,7 +119,6 @@ func TestSweepContinuesPastRecordError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the failing node's error to be returned")
 	}
-	// A per-node failure must not abort the pass: "ancient" is still archived.
 	if got := f.nodes["ancient"].Meta[contracts.MetaState]; got != contracts.StateArchived {
 		t.Fatalf("node after the failing one was skipped: ancient state = %q", got)
 	}
@@ -131,7 +127,6 @@ func TestSweepContinuesPastRecordError(t *testing.T) {
 func TestSweepReactivation(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	f := newSweepFakeMem()
-	// A node that was archived but re-observed (fresh lastSeen) returns to active.
 	f.nodes["r"] = contracts.Node{Key: "r", Meta: map[string]string{
 		contracts.MetaState:    contracts.StateArchived,
 		contracts.MetaLastSeen: now.Add(-time.Hour).Format(time.RFC3339),
@@ -152,7 +147,7 @@ func TestSweepReactivation(t *testing.T) {
 func TestSweepPopulatesTransitionOnChange(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	f := newSweepFakeMem()
-	seed(f, "old", 45, now) // 45 days > 30-day staleAfter, absent Meta[MetaState] == active
+	seed(f, "old", 45, now)
 	c := NewScoped(f, "s", contracts.MemoryScope{})
 	c.now = func() time.Time { return now }
 	if err := c.Sweep(context.Background()); err != nil {
@@ -170,7 +165,7 @@ func TestSweepPopulatesTransitionOnChange(t *testing.T) {
 func TestSweepNoTransitionWhenUnchanged(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	f := newSweepFakeMem()
-	seed(f, "fresh", 1, now) // already active; must not churn
+	seed(f, "fresh", 1, now)
 	c := NewScoped(f, "s", contracts.MemoryScope{})
 	c.now = func() time.Time { return now }
 	if err := c.Sweep(context.Background()); err != nil {
@@ -184,7 +179,7 @@ func TestSweepNoTransitionWhenUnchanged(t *testing.T) {
 func TestSweepWriteFailureProducesNoTransition(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	f := newSweepFakeMem()
-	seed(f, "bad", 45, now) // would transition -> stale, but its write fails
+	seed(f, "bad", 45, now)
 	f.failOn = "bad"
 	c := NewScoped(f, "s", contracts.MemoryScope{})
 	c.now = func() time.Time { return now }

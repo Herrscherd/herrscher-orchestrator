@@ -5,12 +5,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// A session that launched under a guessed project must be able to file the rest
-// of what it learns somewhere else, once the conversation says where.
 func TestSetScopeRedirectsWhatIsRemembered(t *testing.T) {
 	mem := newFake()
 	c := NewScoped(mem, "s", contracts.MemoryScope{Project: contracts.ProjectKey("herrscher")})
@@ -31,23 +30,66 @@ func TestSetScopeRedirectsWhatIsRemembered(t *testing.T) {
 	}
 }
 
-// SetScope arrives from the turn goroutine while the idle loop may be walking
-// the old roots. Run under -race: the point of the test is that it is quiet.
+type gatedRecordMem struct {
+	*fakeMem
+
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (m *gatedRecordMem) Record(ctx context.Context, n contracts.Node) error {
+	m.once.Do(func() {
+		close(m.entered)
+		<-m.release
+	})
+	return m.fakeMem.Record(ctx, n)
+}
+
+type fixedExtractor struct {
+	candidates []Candidate
+}
+
+func (e fixedExtractor) Extract(context.Context, string, string) ([]Candidate, error) {
+	return e.candidates, nil
+}
+
 func TestSetScopeIsSafeAlongsideAConsolidate(t *testing.T) {
-	l := NewLearner(newFake(), "s", contracts.MemoryScope{Project: contracts.ProjectKey("a")}, nil, "", 0)
-	var wg sync.WaitGroup
-	wg.Add(2)
+	mem := &gatedRecordMem{fakeMem: newFake(), entered: make(chan struct{}), release: make(chan struct{})}
+	ex := fixedExtractor{candidates: []Candidate{
+		{Node: contracts.Node{Key: "fact/one", Title: "one", Body: "first"}},
+		{Node: contracts.Node{Key: "fact/two", Title: "two", Body: "second"}},
+	}}
+	l := NewLearner(mem, "s", contracts.MemoryScope{Project: contracts.ProjectKey("a")}, ex, "", 0)
+
+	consolidated := make(chan error, 1)
+	go func() { consolidated <- l.Consolidate(context.Background()) }()
+	<-mem.entered
+
+	scoped := make(chan struct{})
 	go func() {
-		defer wg.Done()
-		for i := 0; i < 50; i++ {
-			_ = l.Consolidate(context.Background())
-		}
+		l.SetScope(contracts.MemoryScope{Project: contracts.ProjectKey("b")})
+		close(scoped)
 	}()
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 50; i++ {
-			l.SetScope(contracts.MemoryScope{Project: contracts.ProjectKey("b")})
+	select {
+	case <-scoped:
+	case <-time.After(500 * time.Millisecond):
+	}
+	close(mem.release)
+
+	if err := <-consolidated; err != nil {
+		t.Fatal(err)
+	}
+	<-scoped
+
+	filedUnder := make(map[string]string)
+	for _, link := range mem.links {
+		filedUnder[link[1]] = link[0]
+	}
+	before := contracts.ProjectKey("a")
+	for _, key := range []string{"fact/one", "fact/two"} {
+		if got := filedUnder[key]; got != before {
+			t.Fatalf("%s filed under %q, want %q: one pass must not straddle a re-scope", key, got, before)
 		}
-	}()
-	wg.Wait()
+	}
 }

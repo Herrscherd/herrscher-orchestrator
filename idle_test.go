@@ -4,13 +4,12 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// idleLearner builds a Learner with the G5 idle trigger configured. A nil
-// extractor keeps Consolidate a clean no-op except for stamping lastRun.
 func idleLearner(days, hours int) *Learner {
 	l := NewLearner(nil, "s", contracts.MemoryScope{}, nil, "", 0)
 	l.SetIdle(days, hours)
@@ -22,7 +21,7 @@ func TestSetIdle(t *testing.T) {
 	if l.idleDays != 7 || l.idleHours != 3 {
 		t.Fatalf("SetIdle did not apply: idleDays=%d idleHours=%d", l.idleDays, l.idleHours)
 	}
-	l.SetIdle(0, 2) // 0 days disables
+	l.SetIdle(0, 2)
 	if l.idleDays != 0 {
 		t.Fatalf("SetIdle(0,..) must leave idleDays=0 (disabled), got %d", l.idleDays)
 	}
@@ -95,14 +94,12 @@ func TestDueForIdleRun(t *testing.T) {
 	}
 }
 
-// fakeClock returns a time it can be advanced past for deterministic stamping.
 type fakeClock struct{ t time.Time }
 
 func (c *fakeClock) now() time.Time      { return c.t }
 func (c *fakeClock) add(d time.Duration) { c.t = c.t.Add(d) }
 
 func TestConsolidateStampsLastRun(t *testing.T) {
-	// nil extractor + nil mem: Consolidate is a no-op except for stamping lastRun.
 	l := NewLearner(nil, "s", contracts.MemoryScope{}, nil, "", 0)
 	clk := &fakeClock{t: time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)}
 	l.now = clk.now
@@ -117,7 +114,7 @@ func TestConsolidateStampsLastRun(t *testing.T) {
 	if first != clk.t {
 		t.Fatalf("lastRun not stamped on first Consolidate: got %v want %v", first, clk.t)
 	}
-	clk.add(3 * time.Hour) // a later manual/no-trigger call must re-stamp
+	clk.add(3 * time.Hour)
 	if err := l.Consolidate(context.Background()); err != nil {
 		t.Fatalf("Consolidate 2: %v", err)
 	}
@@ -127,8 +124,6 @@ func TestConsolidateStampsLastRun(t *testing.T) {
 }
 
 func TestObserveStampsLastActivity(t *testing.T) {
-	// nil mem: Curator.Observe is a no-op, cadence disabled (every=0), so Observe
-	// only stamps lastActivity — no Consolidate fires.
 	l := NewLearner(nil, "s", contracts.MemoryScope{}, nil, "", 0)
 	clk := &fakeClock{t: time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)}
 	l.now = clk.now
@@ -149,36 +144,37 @@ func TestObserveStampsLastActivity(t *testing.T) {
 	}
 }
 
-// TestConcurrentObserveAndConsolidate exercises the interleaving of a turn-path
-// Observe (which may fire the cadence Consolidate) and a forced idle-triggered
-// Consolidate from a second goroutine. Its acceptance bar is a clean `-race`
-// run: no data race, no panic. Uses a real (empty) mergeMem so the full
-// Consolidate body (extract/sweep/merge/promote/report) executes.
-func TestConcurrentObserveAndConsolidate(t *testing.T) {
+func TestConcurrentObserveAndConsolidateIsRaceFree(t *testing.T) {
 	mem := &mergeMem{}
-	l := NewLearner(mem, "s", contracts.MemoryScope{}, plainExt{}, "", 1) // every=1: Observe fires Consolidate each turn
+	l := NewLearner(mem, "s", contracts.MemoryScope{}, plainExt{}, "", 1)
 	l.SetIdle(1, 1)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
+	errs := make(chan error, 400)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 200; i++ {
-			_ = l.Observe(context.Background(), contracts.Prompt{Author: "a", Content: "hi"}, "yo")
+		for range 200 {
+			if err := l.Observe(context.Background(), contracts.Prompt{Author: "a", Content: "hi"}, "yo"); err != nil {
+				errs <- err
+			}
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 200; i++ {
-			_ = l.Consolidate(context.Background()) // forced idle-style call
+		for range 200 {
+			if err := l.Consolidate(context.Background()); err != nil {
+				errs <- err
+			}
 		}
 	}()
 	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
 }
 
-// blockExt is an Extractor whose Extract signals when it has entered (so a test
-// knows the consolidation body is holding mu) then blocks until released. It lets
-// a test pin the consolidation mutex for a deterministic window.
 type blockExt struct {
 	entered chan struct{}
 	release chan struct{}
@@ -190,37 +186,34 @@ func (b blockExt) Extract(context.Context, string, string) ([]Candidate, error) 
 	return nil, nil
 }
 
-// TestObserveDoesNotBlockDuringIdleConsolidate is the invariant-2 liveness guard:
-// a turn-path Observe must never wait on a slow background Consolidate. It pins mu
-// inside a consolidation (blockExt held in Extract), then asserts Observe still
-// returns promptly. Observe stamps lastActivity under stampMu, not mu, so it does
-// not block; if the stamp ever moves back onto mu this test hangs past the
-// deadline and fails. This is a liveness property `-race` cannot catch.
 func TestObserveDoesNotBlockDuringIdleConsolidate(t *testing.T) {
 	ext := blockExt{entered: make(chan struct{}), release: make(chan struct{})}
-	l := NewLearner(&mergeMem{}, "s", contracts.MemoryScope{}, ext, "", 0) // every=0: Observe only stamps
+	l := NewLearner(&mergeMem{}, "s", contracts.MemoryScope{}, ext, "", 0)
 
-	go func() { _ = l.Consolidate(context.Background()) }() // acquires mu, blocks in Extract
-	<-ext.entered                                           // mu is now held for the whole consolidation
+	consolidated := make(chan error, 1)
+	go func() { consolidated <- l.Consolidate(context.Background()) }()
+	<-ext.entered
 
-	done := make(chan struct{})
+	observed := make(chan error, 1)
 	go func() {
-		_ = l.Observe(context.Background(), contracts.Prompt{Author: "a", Content: "hi"}, "yo")
-		close(done)
+		observed <- l.Observe(context.Background(), contracts.Prompt{Author: "a", Content: "hi"}, "yo")
 	}()
 
 	select {
-	case <-done: // Observe returned while mu is pinned → stamp is off mu, invariant 2 holds
+	case err := <-observed:
+		close(ext.release)
+		if err != nil {
+			t.Fatal(err)
+		}
 	case <-time.After(2 * time.Second):
-		close(ext.release) // unblock the goroutine before failing so the test tears down
+		close(ext.release)
 		t.Fatal("Observe blocked while an idle Consolidate held mu (invariant 2 violation)")
 	}
-	close(ext.release) // let the pinned Consolidate finish
+	if err := <-consolidated; err != nil {
+		t.Fatal(err)
+	}
 }
 
-// countExt is an Extractor that counts Extract calls — a proxy for "Consolidate
-// actually ran its body". Consolidate only calls Extract when both extract and
-// mem are non-nil, so pair it with a non-nil mergeMem.
 type countExt struct {
 	mu sync.Mutex
 	n  int
@@ -232,27 +225,26 @@ func (c *countExt) Extract(context.Context, string, string) ([]Candidate, error)
 	c.mu.Unlock()
 	return nil, nil
 }
+
 func (c *countExt) count() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.n
 }
 
-// idleTickLearner builds a Learner whose Consolidate body runs (non-nil mem +
-// countExt) with the idle trigger configured and a fixed clock.
-func idleTickLearner(days, hours int, now time.Time) (*Learner, *countExt) {
+func idleTickLearner(days int, now time.Time) (*Learner, *countExt) {
 	ext := &countExt{}
 	l := NewLearner(&mergeMem{}, "s", contracts.MemoryScope{}, ext, "", 0)
-	l.SetIdle(days, hours)
+	l.SetIdle(days, 2)
 	l.now = func() time.Time { return now }
 	return l, ext
 }
 
 func TestIdleTickFiresWhenDue(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
-	l, ext := idleTickLearner(7, 2, now)
-	l.lastRun = now.Add(-10 * 24 * time.Hour) // 10 days ago >= 7
-	l.lastActivity = now.Add(-5 * time.Hour)  // 5h idle >= 2h
+	l, ext := idleTickLearner(7, now)
+	l.lastRun = now.Add(-10 * 24 * time.Hour)
+	l.lastActivity = now.Add(-5 * time.Hour)
 	l.idleTick(context.Background())
 	if ext.count() != 1 {
 		t.Fatalf("idleTick did not fire Consolidate once when due; extract calls=%d", ext.count())
@@ -261,9 +253,9 @@ func TestIdleTickFiresWhenDue(t *testing.T) {
 
 func TestIdleTickSkipsWhenNotDue(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
-	l, ext := idleTickLearner(7, 2, now)
+	l, ext := idleTickLearner(7, now)
 	l.lastRun = now.Add(-10 * 24 * time.Hour)
-	l.lastActivity = now.Add(-30 * time.Minute) // only 30m idle < 2h → not due
+	l.lastActivity = now.Add(-30 * time.Minute)
 	l.idleTick(context.Background())
 	if ext.count() != 0 {
 		t.Fatalf("idleTick fired when not due; extract calls=%d", ext.count())
@@ -271,51 +263,43 @@ func TestIdleTickSkipsWhenNotDue(t *testing.T) {
 }
 
 func TestStartDisabledSpawnsNothing(t *testing.T) {
-	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
-	l, ext := idleTickLearner(0, 2, now) // idleDays=0 → disabled
-	l.lastRun = now.Add(-100 * 24 * time.Hour)
-	l.lastActivity = now.Add(-100 * time.Hour)
+	synctest.Test(t, func(t *testing.T) {
+		now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+		l, ext := idleTickLearner(0, now)
+		l.lastRun = now.Add(-100 * 24 * time.Hour)
+		l.lastActivity = now.Add(-100 * time.Hour)
 
-	old := idlePollInterval
-	idlePollInterval = time.Millisecond
-	defer func() { idlePollInterval = old }()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	l.Start(ctx)
-	time.Sleep(30 * time.Millisecond) // several would-be ticks
-	if ext.count() != 0 {
-		t.Fatalf("disabled Start must never fire Consolidate; extract calls=%d", ext.count())
-	}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		l.Start(ctx)
+		synctest.Sleep(30 * time.Millisecond)
+		if ext.count() != 0 {
+			t.Fatalf("disabled Start must never fire Consolidate; extract calls=%d", ext.count())
+		}
+	})
 }
 
 func TestStartFiresWhenDueThenStopsOnCancel(t *testing.T) {
-	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
-	l, ext := idleTickLearner(7, 2, now)
-	l.lastRun = now.Add(-10 * 24 * time.Hour)
-	l.lastActivity = now.Add(-5 * time.Hour)
+	synctest.Test(t, func(t *testing.T) {
+		now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+		l, ext := idleTickLearner(7, now)
+		l.lastRun = now.Add(-10 * 24 * time.Hour)
+		l.lastActivity = now.Add(-5 * time.Hour)
 
-	old := idlePollInterval
-	idlePollInterval = time.Millisecond
-	defer func() { idlePollInterval = old }()
+		ctx, cancel := context.WithCancel(context.Background())
+		l.Start(ctx)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	l.Start(ctx)
+		synctest.Sleep(defaultIdlePoll + time.Second)
+		if ext.count() == 0 {
+			t.Fatal("Start never fired an idle Consolidate when due")
+		}
 
-	// Wait (bounded) for at least one idle-triggered Consolidate.
-	deadline := time.Now().Add(2 * time.Second)
-	for ext.count() == 0 && time.Now().Before(deadline) {
-		time.Sleep(2 * time.Millisecond)
-	}
-	if ext.count() == 0 {
-		t.Fatal("Start never fired an idle Consolidate when due")
-	}
-
-	cancel()
-	time.Sleep(20 * time.Millisecond) // let the loop observe ctx.Done and return
-	stopped := ext.count()
-	time.Sleep(30 * time.Millisecond)
-	if ext.count() != stopped {
-		t.Fatalf("idle loop kept firing after ctx cancel: %d -> %d", stopped, ext.count())
-	}
+		cancel()
+		synctest.Wait()
+		stopped := ext.count()
+		synctest.Sleep(30 * time.Millisecond)
+		if ext.count() != stopped {
+			t.Fatalf("idle loop kept firing after ctx cancel: %d -> %d", stopped, ext.count())
+		}
+	})
 }
