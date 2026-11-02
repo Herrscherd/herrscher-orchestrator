@@ -15,7 +15,7 @@ type restoreMem struct {
 	records []contracts.Node
 }
 
-func newRestoreMem() *restoreMem { return &restoreMem{nodes: map[string]contracts.Node{}} }
+func newRestoreMem() *restoreMem { return &restoreMem{nodes: make(map[string]contracts.Node)} }
 
 func (m *restoreMem) Recall(_ context.Context, key string, _ int) (contracts.Subgraph, error) {
 	n, ok := m.nodes[key]

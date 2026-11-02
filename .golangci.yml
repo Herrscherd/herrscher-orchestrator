@@ -146,7 +146,7 @@ linters:
         - name: confusing-results
         - name: modifies-value-receiver
         - name: unhandled-error
-          arguments: ["fmt.Println"]
+          arguments: ["fmt.Println", "strings.Builder.WriteString", "strings.Builder.WriteByte", "strings.Builder.WriteRune"]
         - name: use-any
         - name: datarace
         - name: identical-branches

@@ -10,7 +10,7 @@ import (
 )
 
 func rawNodes(mem *recMem) map[string]contracts.Node {
-	out := map[string]contracts.Node{}
+	out := make(map[string]contracts.Node)
 	for k, n := range mem.nodes {
 		if n.Kind == contracts.KindTranscript {
 			out[k] = n

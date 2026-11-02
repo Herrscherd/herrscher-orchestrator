@@ -104,7 +104,7 @@ func TestValidUmbrellaRejectsDuplicateMergedKeys(t *testing.T) {
 	byKey := map[string]contracts.Node{"facts/a": stale("facts/a", "d")}
 	l := learnerWith(nil, plainExt{}, 2, 40, "stale")
 	u := Umbrella{Node: contracts.Node{Key: "facts/u", Body: "b"}, Merged: []string{"facts/a", "facts/a"}}
-	if l.validUmbrella(u, byKey, map[string]bool{}) {
+	if l.validUmbrella(u, byKey, make(map[string]bool)) {
 		t.Fatal("an umbrella over one repeated original must be rejected")
 	}
 }
@@ -219,7 +219,7 @@ func (m *lockedMem) Unlink(context.Context, string, string) error        { retur
 func (m *lockedMem) Close() error                                        { return nil }
 
 func TestRestoreTransitionAppendIsSynchronised(t *testing.T) {
-	mem := &lockedMem{nodes: map[string]contracts.Node{}}
+	mem := &lockedMem{nodes: make(map[string]contracts.Node)}
 	for i := range 8 {
 		key := string(rune('a' + i))
 		mem.nodes[key] = contracts.Node{Key: key}

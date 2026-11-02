@@ -56,7 +56,7 @@ func (c *Curator) sweepNode(ctx context.Context, n contracts.Node, now time.Time
 		return nil
 	}
 	if n.Meta == nil {
-		n.Meta = map[string]string{}
+		n.Meta = make(map[string]string)
 	}
 	n.Meta[contracts.MetaState] = next
 	if n.Meta[contracts.MetaLastSeen] == "" {

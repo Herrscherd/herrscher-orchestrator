@@ -24,7 +24,7 @@ type restoreConfig struct {
 // RestoreOption configures one Restore call.
 type RestoreOption func(*restoreConfig)
 
-// Force, when true, allows restoring a merged-into original by also clearing
+// Force returns a RestoreOption that, when on, allows restoring a merged-into original by also clearing
 // Meta[MetaMergedInto] so the node becomes independent again. The umbrella
 // node itself is untouched. It may now have one fewer live member, which is
 // fine; umbrellas are additive, not authoritative.
@@ -79,7 +79,7 @@ func Restore(ctx context.Context, mem contracts.Memory, key string, opts ...Rest
 		prior = contracts.StateActive
 	}
 	if n.Meta == nil {
-		n.Meta = map[string]string{}
+		n.Meta = make(map[string]string)
 	}
 	n.Meta[contracts.MetaState] = contracts.StateActive
 	n.Meta[contracts.MetaLastSeen] = cfg.clock().UTC().Format(time.RFC3339)

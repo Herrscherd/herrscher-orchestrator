@@ -4,7 +4,7 @@ import "sync"
 
 var (
 	extractorsMu sync.RWMutex
-	extractors   = map[string]Extractor{}
+	extractors   = make(map[string]Extractor)
 )
 
 // RegisterExtractor registers e under name (typically from an init()). A second

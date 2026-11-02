@@ -16,7 +16,7 @@ type recMem struct {
 	failOn string
 }
 
-func newRec() *recMem { return &recMem{nodes: map[string]contracts.Node{}} }
+func newRec() *recMem { return &recMem{nodes: make(map[string]contracts.Node)} }
 
 func (m *recMem) Record(_ context.Context, n contracts.Node) error {
 	if n.Key == m.failOn {

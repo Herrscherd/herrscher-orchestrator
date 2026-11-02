@@ -43,7 +43,7 @@ func (l *Learner) report(ctx context.Context) error {
 }
 
 func renderReport(stamp string, transitions []Transition) string {
-	counts := map[string]int{}
+	counts := make(map[string]int)
 	for _, tr := range transitions {
 		counts[tr.Kind]++
 	}

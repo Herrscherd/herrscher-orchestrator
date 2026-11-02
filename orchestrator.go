@@ -176,7 +176,7 @@ func (c *Curator) Observe(ctx context.Context, p contracts.Prompt, reply string)
 // Consolidate satisfies contracts.CurationHook. The default keeps a bounded
 // rolling transcript inline (see Observe), so there is nothing to consolidate; a
 // richer orchestrator overrides this with summarisation/pruning.
-func (c *Curator) Consolidate(ctx context.Context) error { return nil }
+func (c *Curator) Consolidate(_ context.Context) error { return nil }
 
 // Close releases resources. The default orchestrator holds none (the Memory it
 // composes is owned and closed by the host).

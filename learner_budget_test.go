@@ -17,7 +17,7 @@ type budgetMem struct {
 }
 
 func newBudgetMem() *budgetMem {
-	return &budgetMem{nodes: map[string]contracts.Node{}, limit: 5}
+	return &budgetMem{nodes: make(map[string]contracts.Node), limit: 5}
 }
 
 func (m *budgetMem) Record(_ context.Context, n contracts.Node) error {

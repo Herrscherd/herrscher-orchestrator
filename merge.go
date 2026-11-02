@@ -9,7 +9,7 @@ import (
 
 const defaultMergeMax = 40
 
-// MetaMergedInto, when set on a node, names the umbrella Key that subsumed it.
+// MetaMergedInto names the umbrella Key that subsumed a node, and is set on that node.
 // It is a terminal marker: the node is kept on disk (reversible) but archived
 // and excluded from recall. Orchestrator-internal; obsidian stores Meta
 // generically, so no contracts change is needed.
@@ -84,7 +84,7 @@ func (l *Learner) Merge(ctx context.Context) error {
 }
 
 func mergeGroups(nodes []contracts.Node, eligible func(contracts.Node) bool) map[string][]contracts.Node {
-	groups := map[string][]contracts.Node{}
+	groups := make(map[string][]contracts.Node)
 	for _, n := range nodes {
 		if n.Meta[MetaMergedInto] != "" || !eligible(n) {
 			continue
@@ -191,7 +191,7 @@ func (l *Learner) archiveOriginal(ctx context.Context, u Umbrella, k string, ori
 		prevState = contracts.StateActive
 	}
 	if orig.Meta == nil {
-		orig.Meta = map[string]string{}
+		orig.Meta = make(map[string]string)
 	}
 	orig.Meta[MetaMergedInto] = u.Node.Key
 	orig.Meta[contracts.MetaState] = contracts.StateArchived
@@ -216,7 +216,7 @@ func (l *Learner) validUmbrella(u Umbrella, byKey map[string]contracts.Node, exi
 		}
 	}
 	if reason == "" {
-		distinct := map[string]bool{}
+		distinct := make(map[string]bool)
 		for _, k := range u.Merged {
 			if _, ok := byKey[k]; !ok {
 				reason = "merged key outside candidate group"

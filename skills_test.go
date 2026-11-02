@@ -18,7 +18,7 @@ type skillMem struct {
 }
 
 func newSkillMem() *skillMem {
-	return &skillMem{nodes: map[string]contracts.Node{}, recalls: map[string]contracts.Subgraph{}}
+	return &skillMem{nodes: make(map[string]contracts.Node), recalls: make(map[string]contracts.Subgraph)}
 }
 
 func (m *skillMem) Recall(_ context.Context, key string, _ int) (contracts.Subgraph, error) {
@@ -305,7 +305,7 @@ func TestLearnedSkillsMergesBothScopesPrivateWinning(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("%d skills, want 2 (a fact is not a skill, a name collision is not two skills): %v", len(got), got)
 	}
-	byName := map[string]contracts.Node{}
+	byName := make(map[string]contracts.Node)
 	for _, n := range got {
 		byName[skillTail(n.Key)] = n
 	}

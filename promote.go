@@ -9,14 +9,14 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// MetaPromotedTo, when set on a private node, names the Key of the shared copy
-// it was promoted to. It is a terminal marker on the ORIGINAL: the original is
+// MetaPromotedTo names the Key of the shared copy that a private node was
+// promoted to. It is a terminal marker on the ORIGINAL: the original is
 // kept (reversible, still private, still usable by its own agent) but is never
 // re-promoted. Orchestrator-internal; obsidian stores Meta generically, so no
 // contracts change is needed.
 const MetaPromotedTo = "promotedTo"
 
-// MetaPromotedFrom, set on a shared copy, names the Key of the private node it
+// MetaPromotedFrom names, on a shared copy, the Key of the private node it
 // was promoted from (the back-pointer counterpart to MetaPromotedTo).
 const MetaPromotedFrom = "promotedFrom"
 
@@ -26,7 +26,7 @@ func (l *Learner) SetPromote(minAge time.Duration) {
 	l.promoteMinAge = minAge
 }
 
-func (l *Learner) promoteEligible(n contracts.Node, now time.Time) bool {
+func (l *Learner) promoteEligible(n contracts.Node, _ time.Time) bool {
 	state := n.Meta[contracts.MetaState]
 	if state != "" && state != contracts.StateActive {
 		return false
@@ -88,7 +88,7 @@ func (l *Learner) applyPromotion(ctx context.Context, n contracts.Node) error {
 		return err
 	}
 	if n.Meta == nil {
-		n.Meta = map[string]string{}
+		n.Meta = make(map[string]string)
 	}
 	n.Meta[MetaPromotedTo] = dup.Key
 	return l.mem.Record(ctx, n)

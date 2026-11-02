@@ -41,6 +41,7 @@ func init() {
 	})
 }
 
+// SettingError reports a plugin setting whose value is not a valid integer.
 type SettingError struct {
 	Key   string
 	Value string
@@ -88,7 +89,7 @@ func boolSetting(v string, def bool) bool {
 	}
 }
 
-func newOrchestrator(ctx context.Context, cfg contracts.PluginConfig, mem contracts.Memory) (contracts.Orchestrator, error) {
+func newOrchestrator(_ context.Context, cfg contracts.PluginConfig, mem contracts.Memory) (contracts.Orchestrator, error) {
 	var scope contracts.MemoryScope
 	if p := cfg.Get("memory.project"); p != "" {
 		scope.Project = contracts.ProjectKey(p)

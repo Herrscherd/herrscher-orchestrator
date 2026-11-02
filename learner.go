@@ -96,7 +96,7 @@ var _ contracts.Orchestrator = (*Learner)(nil)
 // NewLearner builds a learning orchestrator. With a nil extractor it behaves
 // exactly like the default Curator (Consolidate is a no-op).
 func NewLearner(mem contracts.Memory, session string, scope contracts.MemoryScope, ex Extractor, journal string, every int) *Learner {
-	return &Learner{Curator: NewScoped(mem, session, scope), extract: ex, journal: journal, every: every, seen: map[string]bool{}, idlePoll: 10 * time.Minute}
+	return &Learner{Curator: NewScoped(mem, session, scope), extract: ex, journal: journal, every: every, seen: make(map[string]bool), idlePoll: 10 * time.Minute}
 }
 
 // SetIdle configures the G5 inactivity trigger. sinceLastRunDays <= 0 disables
@@ -155,6 +155,7 @@ func (l *Learner) Start(ctx context.Context) {
 	}()
 }
 
+// Close stops the idle loop, waits for it to exit, then closes the Curator.
 func (l *Learner) Close() error {
 	if l.stopIdle != nil {
 		l.stopIdle()

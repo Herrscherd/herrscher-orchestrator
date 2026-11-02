@@ -16,6 +16,7 @@ import (
 
 const maxSkillNameRunes = 60
 
+// ErrNotSkill is wrapped by ApproveSkill when the node named by key is not a skill.
 var ErrNotSkill = errors.New("not a skill")
 
 var skillMarker = regexp.MustCompile(`(?is)<\s*skill\s+name\s*=\s*"([^"]*)"\s*>(.*?)<\s*/\s*skill\s*>`)
@@ -23,7 +24,7 @@ var skillMarker = regexp.MustCompile(`(?is)<\s*skill\s+name\s*=\s*"([^"]*)"\s*>(
 const skillPreamble = ` Write down a procedure you had to work out, so a later session starts where this one ended, ` +
 	`with <skill name="short-name">the steps</skill>; re-emitting the same name revises it.`
 
-// MetaApproved, set on a KindSkill node, is a human's answer to the only question
+// MetaApproved is a human's answer, set on a KindSkill node, to the only question
 // a self-authored skill raises: may every agent of this project run it. A skill's
 // body comes from the journal, which carries chat messages, repository files and
 // web pages, so a promoted one would turn "what this agent believes" into "what
@@ -222,7 +223,7 @@ func (c *Curator) SkillUsed(ctx context.Context, names []string) {
 		}
 		n := sg.Root
 		if n.Meta == nil {
-			n.Meta = map[string]string{}
+			n.Meta = make(map[string]string)
 		}
 		n.Meta[contracts.MetaLastSeen] = stamp
 		c.logFailure("memory: stamp skill failed", c.mem.Record(ctx, n))
@@ -246,7 +247,7 @@ func ApproveSkill(ctx context.Context, m contracts.Memory, key string, approve b
 	}
 	n := sg.Root
 	if n.Meta == nil {
-		n.Meta = map[string]string{}
+		n.Meta = make(map[string]string)
 	}
 	if approve {
 		n.Meta[MetaApproved] = "true"

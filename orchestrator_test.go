@@ -14,7 +14,7 @@ type fakeMem struct {
 	links  [][3]string
 }
 
-func newFake() *fakeMem { return &fakeMem{nodes: map[string]contracts.Node{}} }
+func newFake() *fakeMem { return &fakeMem{nodes: make(map[string]contracts.Node)} }
 
 func (f *fakeMem) Record(_ context.Context, n contracts.Node) error {
 	f.nodes[n.Key] = n

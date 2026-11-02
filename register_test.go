@@ -53,7 +53,7 @@ func TestManifestHasIdleSettings(t *testing.T) {
 		"idle-days":  "MEMORY_IDLE_DAYS",
 		"idle-hours": "MEMORY_IDLE_HOURS",
 	}
-	found := map[string]string{}
+	found := make(map[string]string)
 	for _, p := range contracts.Default.Orchestrators() {
 		if p.Manifest.Category != contracts.CategoryOrchestrator {
 			continue

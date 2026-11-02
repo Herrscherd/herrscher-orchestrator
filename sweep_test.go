@@ -15,13 +15,13 @@ type sweepFakeMem struct {
 	failOn string
 }
 
-func newSweepFakeMem() *sweepFakeMem { return &sweepFakeMem{nodes: map[string]contracts.Node{}} }
+func newSweepFakeMem() *sweepFakeMem { return &sweepFakeMem{nodes: make(map[string]contracts.Node)} }
 
-func (f *sweepFakeMem) Recall(ctx context.Context, key string, depth int) (contracts.Subgraph, error) {
+func (f *sweepFakeMem) Recall(_ context.Context, key string, _ int) (contracts.Subgraph, error) {
 	return contracts.Subgraph{Root: f.nodes[key]}, nil
 }
 
-func (f *sweepFakeMem) Record(ctx context.Context, n contracts.Node) error {
+func (f *sweepFakeMem) Record(_ context.Context, n contracts.Node) error {
 	if n.Key == f.failOn {
 		return errors.New("record failed")
 	}
@@ -30,7 +30,7 @@ func (f *sweepFakeMem) Record(ctx context.Context, n contracts.Node) error {
 	return nil
 }
 
-func (f *sweepFakeMem) Search(ctx context.Context, q contracts.Query) ([]contracts.Node, error) {
+func (f *sweepFakeMem) Search(_ context.Context, q contracts.Query) ([]contracts.Node, error) {
 	var out []contracts.Node
 	for _, n := range f.nodes {
 		if n.Meta[contracts.MetaState] == contracts.StateArchived && !q.IncludeArchived {
@@ -40,7 +40,7 @@ func (f *sweepFakeMem) Search(ctx context.Context, q contracts.Query) ([]contrac
 	}
 	return out, nil
 }
-func (f *sweepFakeMem) Links(ctx context.Context, from, to, rel string) error { return nil }
+func (f *sweepFakeMem) Links(_ context.Context, _, _, _ string) error { return nil }
 func (f *sweepFakeMem) Unlink(context.Context, string, string) error          { return nil }
 func (f *sweepFakeMem) Close() error                                          { return nil }
 
