@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
@@ -150,11 +151,12 @@ func TestConcurrentObserveAndConsolidateIsRaceFree(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(2)
+	errs := make(chan error, 400)
 	go func() {
 		defer wg.Done()
 		for range 200 {
 			if err := l.Observe(context.Background(), contracts.Prompt{Author: "a", Content: "hi"}, "yo"); err != nil {
-				t.Error(err)
+				errs <- err
 			}
 		}
 	}()
@@ -162,11 +164,15 @@ func TestConcurrentObserveAndConsolidateIsRaceFree(t *testing.T) {
 		defer wg.Done()
 		for range 200 {
 			if err := l.Consolidate(context.Background()); err != nil {
-				t.Error(err)
+				errs <- err
 			}
 		}
 	}()
 	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
 }
 
 type blockExt struct {
@@ -184,28 +190,28 @@ func TestObserveDoesNotBlockDuringIdleConsolidate(t *testing.T) {
 	ext := blockExt{entered: make(chan struct{}), release: make(chan struct{})}
 	l := NewLearner(&mergeMem{}, "s", contracts.MemoryScope{}, ext, "", 0)
 
-	go func() {
-		if err := l.Consolidate(context.Background()); err != nil {
-			t.Error(err)
-		}
-	}()
+	consolidated := make(chan error, 1)
+	go func() { consolidated <- l.Consolidate(context.Background()) }()
 	<-ext.entered
 
-	done := make(chan struct{})
+	observed := make(chan error, 1)
 	go func() {
-		if err := l.Observe(context.Background(), contracts.Prompt{Author: "a", Content: "hi"}, "yo"); err != nil {
-			t.Error(err)
-		}
-		close(done)
+		observed <- l.Observe(context.Background(), contracts.Prompt{Author: "a", Content: "hi"}, "yo")
 	}()
 
 	select {
-	case <-done:
+	case err := <-observed:
+		close(ext.release)
+		if err != nil {
+			t.Fatal(err)
+		}
 	case <-time.After(2 * time.Second):
 		close(ext.release)
 		t.Fatal("Observe blocked while an idle Consolidate held mu (invariant 2 violation)")
 	}
-	close(ext.release)
+	if err := <-consolidated; err != nil {
+		t.Fatal(err)
+	}
 }
 
 type countExt struct {
@@ -257,46 +263,45 @@ func TestIdleTickSkipsWhenNotDue(t *testing.T) {
 }
 
 func TestStartDisabledSpawnsNothing(t *testing.T) {
-	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
-	l, ext := idleTickLearner(0, now)
-	l.lastRun = now.Add(-100 * 24 * time.Hour)
-	l.lastActivity = now.Add(-100 * time.Hour)
+	synctest.Test(t, func(t *testing.T) {
+		now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+		l, ext := idleTickLearner(0, now)
+		l.lastRun = now.Add(-100 * 24 * time.Hour)
+		l.lastActivity = now.Add(-100 * time.Hour)
+		l.idlePoll = time.Millisecond
 
-	l.idlePoll = time.Millisecond
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	l.Start(ctx)
-	time.Sleep(30 * time.Millisecond)
-	if ext.count() != 0 {
-		t.Fatalf("disabled Start must never fire Consolidate; extract calls=%d", ext.count())
-	}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		l.Start(ctx)
+		synctest.Sleep(30 * time.Millisecond)
+		if ext.count() != 0 {
+			t.Fatalf("disabled Start must never fire Consolidate; extract calls=%d", ext.count())
+		}
+	})
 }
 
 func TestStartFiresWhenDueThenStopsOnCancel(t *testing.T) {
-	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
-	l, ext := idleTickLearner(7, now)
-	l.lastRun = now.Add(-10 * 24 * time.Hour)
-	l.lastActivity = now.Add(-5 * time.Hour)
+	synctest.Test(t, func(t *testing.T) {
+		now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+		l, ext := idleTickLearner(7, now)
+		l.lastRun = now.Add(-10 * 24 * time.Hour)
+		l.lastActivity = now.Add(-5 * time.Hour)
+		l.idlePoll = time.Millisecond
 
-	l.idlePoll = time.Millisecond
+		ctx, cancel := context.WithCancel(context.Background())
+		l.Start(ctx)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	l.Start(ctx)
+		synctest.Sleep(2 * time.Millisecond)
+		if ext.count() == 0 {
+			t.Fatal("Start never fired an idle Consolidate when due")
+		}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for ext.count() == 0 && time.Now().Before(deadline) {
-		time.Sleep(2 * time.Millisecond)
-	}
-	if ext.count() == 0 {
-		t.Fatal("Start never fired an idle Consolidate when due")
-	}
-
-	cancel()
-	time.Sleep(20 * time.Millisecond)
-	stopped := ext.count()
-	time.Sleep(30 * time.Millisecond)
-	if ext.count() != stopped {
-		t.Fatalf("idle loop kept firing after ctx cancel: %d -> %d", stopped, ext.count())
-	}
+		cancel()
+		synctest.Wait()
+		stopped := ext.count()
+		synctest.Sleep(30 * time.Millisecond)
+		if ext.count() != stopped {
+			t.Fatalf("idle loop kept firing after ctx cancel: %d -> %d", stopped, ext.count())
+		}
+	})
 }

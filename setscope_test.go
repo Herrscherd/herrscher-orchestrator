@@ -33,11 +33,12 @@ func TestSetScopeIsSafeAlongsideAConsolidate(t *testing.T) {
 	l := NewLearner(newFake(), "s", contracts.MemoryScope{Project: contracts.ProjectKey("a")}, nil, "", 0)
 	var wg sync.WaitGroup
 	wg.Add(2)
+	errs := make(chan error, 50)
 	go func() {
 		defer wg.Done()
 		for range 50 {
 			if err := l.Consolidate(context.Background()); err != nil {
-				t.Error(err)
+				errs <- err
 			}
 		}
 	}()
@@ -48,4 +49,8 @@ func TestSetScopeIsSafeAlongsideAConsolidate(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
 }

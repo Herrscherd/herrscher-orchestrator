@@ -226,16 +226,21 @@ func TestRestoreTransitionAppendIsSynchronised(t *testing.T) {
 	}
 	l := NewLearner(mem, "s", contracts.MemoryScope{}, plainExt{}, "", 0)
 	var wg sync.WaitGroup
+	errs := make(chan error, 8)
 	for i := range 8 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			if err := l.Restore(context.Background(), string(rune('a'+i))); err != nil {
-				t.Error(err)
+				errs <- err
 			}
 		}(i)
 	}
 	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
 	if len(l.transitions) != 8 {
 		t.Fatalf("transitions = %d, want 8", len(l.transitions))
 	}

@@ -206,14 +206,12 @@ func TestSweepRunsAfterEnqueue(t *testing.T) {
 	}
 }
 
-func TestEnqueueEmitsWarn(t *testing.T) {
+func TestOverBudgetCandidateWarnsOnTheLearnersOwnLogger(t *testing.T) {
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	defer slog.SetDefault(prev)
 
 	mem := newBudgetMem()
 	l := NewLearner(mem, "s", mustScope(), &oneBig{body: "0123456789"}, "", 0)
+	l.SetLogger(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	if err := l.Consolidate(context.Background()); err != nil {
 		t.Fatalf("Consolidate: %v", err)
 	}
