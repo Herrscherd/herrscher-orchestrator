@@ -35,43 +35,44 @@ func (c *Curator) Sweep(ctx context.Context) error {
 	return firstErr
 }
 
-func (c *Curator) sweepNode(ctx context.Context, n contracts.Node, now time.Time) error {
-	if n.Meta[MetaMergedInto] != "" || n.Kind == ReportKind {
+func (c *Curator) sweepNode(ctx context.Context, node contracts.Node, now time.Time) error {
+	if node.Meta[MetaMergedInto] != "" || node.Kind == ReportKind {
 		return nil
 	}
-	stamp := lastSeenStamp(n)
+	stamp := lastSeenStamp(node)
 	if stamp == "" {
 		return nil
 	}
 	lastSeen, err := time.Parse(time.RFC3339, stamp)
 	if err != nil {
+		c.log.Warn("sweep skipped a node with an unreadable last-seen stamp", "key", node.Key, "stamp", stamp, "error", err)
 		return nil
 	}
 	next := contracts.NextState(lastSeen, now, c.staleAfter, c.archiveAfter)
-	cur := n.Meta[contracts.MetaState]
+	cur := node.Meta[contracts.MetaState]
 	if cur == "" {
 		cur = contracts.StateActive
 	}
 	if next == cur {
 		return nil
 	}
-	if n.Meta == nil {
-		n.Meta = make(map[string]string)
+	if node.Meta == nil {
+		node.Meta = make(map[string]string)
 	}
-	n.Meta[contracts.MetaState] = next
-	if n.Meta[contracts.MetaLastSeen] == "" {
-		n.Meta[contracts.MetaLastSeen] = stamp
+	node.Meta[contracts.MetaState] = next
+	if node.Meta[contracts.MetaLastSeen] == "" {
+		node.Meta[contracts.MetaLastSeen] = stamp
 	}
-	if err := c.mem.Record(ctx, n); err != nil {
+	if err := c.mem.Record(ctx, node); err != nil {
 		return err
 	}
-	c.transitions = append(c.transitions, Transition{Key: n.Key, From: cur, To: next, Kind: "sweep"})
+	c.transitions = append(c.transitions, Transition{Key: node.Key, From: cur, To: next, Kind: "sweep"})
 	return nil
 }
 
-func lastSeenStamp(n contracts.Node) string {
-	if stamp := n.Meta[contracts.MetaLastSeen]; stamp != "" {
+func lastSeenStamp(node contracts.Node) string {
+	if stamp := node.Meta[contracts.MetaLastSeen]; stamp != "" {
 		return stamp
 	}
-	return n.Meta["capturedAt"]
+	return node.Meta["capturedAt"]
 }

@@ -14,6 +14,7 @@ import (
 const (
 	defaultStaleDays   = 30
 	defaultArchiveDays = 90
+	defaultIdleHours   = 2
 )
 
 func init() {
@@ -61,17 +62,17 @@ func intSetting(cfg contracts.PluginConfig, key string, def int) (int, error) {
 	if raw == "" {
 		return def, nil
 	}
-	n, err := strconv.Atoi(raw)
+	days, err := strconv.Atoi(raw)
 	if err != nil {
 		return 0, SettingError{Key: key, Value: raw, Err: err}
 	}
-	return n, nil
+	return days, nil
 }
 
-func staleDuration(v string, defaultDays int) time.Duration {
+func staleDuration(raw string, defaultDays int) time.Duration {
 	days := defaultDays
-	if v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
+	if raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
 			days = n
 		}
 	}
@@ -100,30 +101,28 @@ func newOrchestrator(_ context.Context, cfg contracts.PluginConfig, mem contract
 	if ex := lookupExtractor(cfg.Get("memory.extractor")); ex != nil {
 		return newLearnerFromConfig(cfg, mem, scope, ex)
 	}
-	stale, archive := stalenessFromConfig(cfg)
-	c := NewScoped(mem, cfg.Get("session"), scope)
-	c.SetLogger(slog.Default())
-	c.SetStaleness(stale, archive)
-	c.SetLearnedSkills(boolSetting(cfg.Get("learned-skills"), false))
-	return c, nil
+	curator := NewScoped(mem, cfg.Get("session"), scope)
+	curator.SetLogger(slog.Default())
+	curator.SetStaleness(staleAfterFromConfig(cfg), archiveAfterFromConfig(cfg))
+	curator.SetLearnedSkills(boolSetting(cfg.Get("learned-skills"), false))
+	return curator, nil
 }
 
-func newLearnerFromConfig(cfg contracts.PluginConfig, mem contracts.Memory, scope contracts.MemoryScope, ex Extractor) (contracts.Orchestrator, error) {
+func newLearnerFromConfig(cfg contracts.PluginConfig, mem contracts.Memory, scope contracts.MemoryScope, extractor Extractor) (contracts.Orchestrator, error) {
 	every, err := intSetting(cfg, "memory.consolidate-every", 0)
 	if err != nil {
 		return nil, err
 	}
-	l := NewLearner(mem, cfg.Get("session"), scope, ex, cfg.Get("memory.journal"), every)
-	l.SetLogger(slog.Default())
-	stale, archive := stalenessFromConfig(cfg)
-	l.SetStaleness(stale, archive)
-	if err := configureLearner(l, cfg); err != nil {
+	learner := NewLearner(mem, cfg.Get("session"), scope, extractor, cfg.Get("memory.journal"), every)
+	learner.SetLogger(slog.Default())
+	learner.SetStaleness(staleAfterFromConfig(cfg), archiveAfterFromConfig(cfg))
+	if err := configureLearner(learner, cfg); err != nil {
 		return nil, err
 	}
-	return l, nil
+	return learner, nil
 }
 
-func configureLearner(l *Learner, cfg contracts.PluginConfig) error {
+func configureLearner(learner *Learner, cfg contracts.PluginConfig) error {
 	mergeMin, err := intSetting(cfg, "merge-min-nodes", 0)
 	if err != nil {
 		return err
@@ -132,20 +131,20 @@ func configureLearner(l *Learner, cfg contracts.PluginConfig) error {
 	if err != nil {
 		return err
 	}
-	l.SetMerge(mergeMin, mergeMax, cfg.Get("merge-target"))
-	l.SetReport(boolSetting(cfg.Get("report-enabled"), true), cfg.Get("report-prefix"))
+	learner.SetMerge(mergeMin, mergeMax, cfg.Get("merge-target"))
+	learner.SetReport(boolSetting(cfg.Get("report-enabled"), true), cfg.Get("report-prefix"))
 	promoteDays, err := intSetting(cfg, "promote-min-age-days", 0)
 	if err != nil {
 		return err
 	}
-	l.SetPromote(time.Duration(promoteDays) * 24 * time.Hour)
+	learner.SetPromote(time.Duration(promoteDays) * 24 * time.Hour)
 	idleDays, err := intSetting(cfg, "idle-days", 0)
 	if err != nil {
 		return err
 	}
-	l.SetIdle(idleDays, idleHoursFromConfig(cfg))
-	l.SetRawArchive(boolSetting(cfg.Get("raw-archive"), false))
-	l.SetLearnedSkills(boolSetting(cfg.Get("learned-skills"), false))
+	learner.SetIdle(idleDays, idleHoursFromConfig(cfg))
+	learner.SetRawArchive(boolSetting(cfg.Get("raw-archive"), false))
+	learner.SetLearnedSkills(boolSetting(cfg.Get("learned-skills"), false))
 	return nil
 }
 
@@ -153,10 +152,13 @@ func idleHoursFromConfig(cfg contracts.PluginConfig) int {
 	if v, err := strconv.Atoi(cfg.Get("idle-hours")); err == nil {
 		return v
 	}
-	return 2
+	return defaultIdleHours
 }
 
-func stalenessFromConfig(cfg contracts.PluginConfig) (stale, archive time.Duration) {
-	return staleDuration(cfg.Get("stale-days"), defaultStaleDays),
-		staleDuration(cfg.Get("archive-days"), defaultArchiveDays)
+func staleAfterFromConfig(cfg contracts.PluginConfig) time.Duration {
+	return staleDuration(cfg.Get("stale-days"), defaultStaleDays)
+}
+
+func archiveAfterFromConfig(cfg contracts.PluginConfig) time.Duration {
+	return staleDuration(cfg.Get("archive-days"), defaultArchiveDays)
 }

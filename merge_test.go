@@ -64,15 +64,15 @@ func stale(key, domain string) contracts.Node {
 	}}
 }
 
-func learnerWith(mem contracts.Memory, ex Extractor, minNodes, maxNodes int, target string) *Learner {
+func learnerWith(mem contracts.Memory, ex Extractor, minNodes, maxNodes int) *Learner {
 	l := NewLearner(mem, "s", contracts.MemoryScope{}, ex, "", 0)
-	l.SetMerge(minNodes, maxNodes, target)
+	l.SetMerge(minNodes, maxNodes, "stale")
 	return l
 }
 
 func TestMergeNoMergerIsNoop(t *testing.T) {
 	mem := &mergeMem{nodes: []contracts.Node{stale("a", "d"), stale("b", "d")}}
-	l := learnerWith(mem, plainExt{}, 2, 40, "stale")
+	l := learnerWith(mem, plainExt{}, 2, 40)
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestMergeNoMergerIsNoop(t *testing.T) {
 func TestMergeDisabledWhenMinZero(t *testing.T) {
 	mem := &mergeMem{nodes: []contracts.Node{stale("a", "d"), stale("b", "d")}}
 	f := &fakeMerger{}
-	l := learnerWith(mem, f, 0, 40, "stale")
+	l := learnerWith(mem, f, 0, 40)
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestMergeDisabledWhenMinZero(t *testing.T) {
 func TestMergeBelowThresholdNoCall(t *testing.T) {
 	mem := &mergeMem{nodes: []contracts.Node{stale("a", "d")}}
 	f := &fakeMerger{}
-	l := learnerWith(mem, f, 2, 40, "stale")
+	l := learnerWith(mem, f, 2, 40)
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestMergeHappyPathWritesAndArchives(t *testing.T) {
 		Node:   contracts.Node{Key: "facts/umbrella", Body: "fused"},
 		Merged: []string{"facts/a", "facts/b"},
 	}}}
-	l := learnerWith(mem, f, 2, 40, "stale")
+	l := learnerWith(mem, f, 2, 40)
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestMergeRejectsInvalidUmbrellaKeepsValid(t *testing.T) {
 		{Node: contracts.Node{Key: "facts/f", Body: "x"}, Merged: []string{"facts/a", "facts/z"}},
 		{Node: contracts.Node{Key: "facts/good", Body: "ok"}, Merged: []string{"facts/a", "facts/b"}},
 	}}
-	l := learnerWith(mem, f, 2, 40, "stale")
+	l := learnerWith(mem, f, 2, 40)
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestMergeRejectsInvalidUmbrellaKeepsValid(t *testing.T) {
 func TestMergeGroupsByDomainNotMixed(t *testing.T) {
 	mem := &mergeMem{nodes: []contracts.Node{stale("a", "d1"), stale("b", "d2")}}
 	f := &fakeMerger{}
-	l := learnerWith(mem, f, 2, 40, "stale")
+	l := learnerWith(mem, f, 2, 40)
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestMergeRespectsCap(t *testing.T) {
 	}
 	mem := &mergeMem{nodes: nodes}
 	f := &fakeMerger{}
-	l := learnerWith(mem, f, 2, 3, "stale")
+	l := learnerWith(mem, f, 2, 3)
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestMergeTargetFiltersToStale(t *testing.T) {
 	active.Meta[contracts.MetaState] = contracts.StateActive
 	mem := &mergeMem{nodes: []contracts.Node{stale("s1", "d"), stale("s2", "d"), active}}
 	f := &fakeMerger{}
-	l := learnerWith(mem, f, 2, 40, "stale")
+	l := learnerWith(mem, f, 2, 40)
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestMergeBestEffortOnOriginalRecordError(t *testing.T) {
 		Node:   contracts.Node{Key: "facts/u", Body: "fused"},
 		Merged: []string{"facts/a", "facts/b"},
 	}}}
-	l := learnerWith(mem, f, 2, 40, "stale")
+	l := learnerWith(mem, f, 2, 40)
 	if err := l.Merge(context.Background()); err == nil {
 		t.Error("Merge did not report the failed original record")
 	}
@@ -335,7 +335,7 @@ func TestMergeRejectsUmbrellaCollidingWithExistingNode(t *testing.T) {
 		Node:   contracts.Node{Key: "other", Body: "fused"},
 		Merged: []string{"facts/a", "facts/b"},
 	}}}
-	l := learnerWith(mem, f, 2, 40, "stale")
+	l := learnerWith(mem, f, 2, 40)
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestMergeRejectsDuplicateUmbrellaKeyInSamePass(t *testing.T) {
 		{Node: contracts.Node{Key: "facts/dup", Body: "first"}, Merged: []string{"facts/a", "facts/b"}},
 		{Node: contracts.Node{Key: "facts/dup", Body: "second"}, Merged: []string{"facts/c", "facts/d"}},
 	}}
-	l := learnerWith(mem, f, 2, 40, "stale")
+	l := learnerWith(mem, f, 2, 40)
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -388,7 +388,7 @@ func TestMergePopulatesTransitions(t *testing.T) {
 		Node:   contracts.Node{Key: "facts/umbrella", Body: "fused"},
 		Merged: []string{"facts/a", "facts/b"},
 	}}}
-	l := learnerWith(mem, f, 2, 40, "stale")
+	l := learnerWith(mem, f, 2, 40)
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestMergeTransitionSkippedOnOriginalRecordError(t *testing.T) {
 		Node:   contracts.Node{Key: "facts/u", Body: "fused"},
 		Merged: []string{"facts/a", "facts/b"},
 	}}}
-	l := learnerWith(mem, f, 2, 40, "stale")
+	l := learnerWith(mem, f, 2, 40)
 	if err := l.Merge(context.Background()); err == nil {
 		t.Error("Merge did not report the failed original record")
 	}
@@ -440,7 +440,7 @@ func TestMergeTransitionSkippedOnOriginalRecordError(t *testing.T) {
 func TestConsolidateRunsMerge(t *testing.T) {
 	mem := &mergeMem{nodes: []contracts.Node{stale("facts/a", "d"), stale("facts/b", "d")}}
 	f := &fakeMerger{}
-	l := learnerWith(mem, f, 2, 40, "stale")
+	l := learnerWith(mem, f, 2, 40)
 	if err := l.Consolidate(context.Background()); err != nil {
 		t.Fatalf("Consolidate: %v", err)
 	}

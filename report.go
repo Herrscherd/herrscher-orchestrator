@@ -47,13 +47,13 @@ func renderReport(stamp string, transitions []Transition) string {
 	for _, tr := range transitions {
 		counts[tr.Kind]++
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "# consolidate report %s\n\n", stamp)
-	fmt.Fprintf(&b, "sweep=%d merge=%d restore=%d\n\n", counts["sweep"], counts["merge"], counts["restore"])
-	b.WriteString("| key | kind | from | to |\n")
-	b.WriteString("|---|---|---|---|\n")
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "# consolidate report %s\n\n", stamp)
+	fmt.Fprintf(&builder, "sweep=%d merge=%d restore=%d\n\n", counts["sweep"], counts["merge"], counts["restore"])
+	builder.WriteString("| key | kind | from | to |\n")
+	builder.WriteString("|---|---|---|---|\n")
 	for _, tr := range transitions {
-		fmt.Fprintf(&b, "| %s | %s | %s | %s |\n", tr.Key, tr.Kind, tr.From, tr.To)
+		fmt.Fprintf(&builder, "| %s | %s | %s | %s |\n", tr.Key, tr.Kind, tr.From, tr.To)
 	}
-	return b.String()
+	return builder.String()
 }

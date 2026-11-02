@@ -86,25 +86,25 @@ func (c *Curator) remember(ctx context.Context, fact string) {
 }
 
 func (c *Curator) frame(digest string) string {
-	var b strings.Builder
-	b.WriteString("<memory>\n")
-	b.WriteString(memoryPreamble)
+	var builder strings.Builder
+	builder.WriteString("<memory>\n")
+	builder.WriteString(memoryPreamble)
 	if c.learnedSkills {
-		b.WriteString(skillPreamble)
+		builder.WriteString(skillPreamble)
 	}
 	if digest != "" {
-		b.WriteString("\n\n")
-		b.WriteString(digest)
+		builder.WriteString("\n\n")
+		builder.WriteString(digest)
 	}
 	if len(c.pending) > 0 {
-		b.WriteString("\n\n## results of your last <recall>\n")
+		builder.WriteString("\n\n## results of your last <recall>\n")
 		for _, n := range c.pending {
-			writeNode(&b, n)
+			writeNode(&builder, n)
 		}
 		c.pending = nil
 	}
-	b.WriteString("\n</memory>")
-	return b.String()
+	builder.WriteString("\n</memory>")
+	return builder.String()
 }
 
 func factKey(prefix, title string) string {
@@ -115,26 +115,26 @@ func factKey(prefix, title string) string {
 
 const maxSlugLen = 60
 
-func slug(s string) string {
-	var b strings.Builder
+func slug(text string) string {
+	var builder strings.Builder
 	pendingSep := false
-	for _, r := range strings.TrimSpace(strings.ToLower(s)) {
+	for _, character := range strings.TrimSpace(strings.ToLower(text)) {
 		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			if pendingSep && b.Len() > 0 {
-				b.WriteByte('-')
+		case character >= 'a' && character <= 'z', character >= '0' && character <= '9':
+			if pendingSep && builder.Len() > 0 {
+				builder.WriteByte('-')
 			}
 			pendingSep = false
-			b.WriteRune(r)
-			if b.Len() >= maxSlugLen {
-				return b.String()
+			builder.WriteRune(character)
+			if builder.Len() >= maxSlugLen {
+				return builder.String()
 			}
 		default:
 			pendingSep = true
 		}
 	}
-	if b.Len() == 0 {
+	if builder.Len() == 0 {
 		return "note"
 	}
-	return b.String()
+	return builder.String()
 }

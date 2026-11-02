@@ -51,7 +51,7 @@ func TestMergeSkipsStructuralKinds(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			n := stale("k", "d")
 			n.Kind = c.kind
-			l := learnerWith(nil, plainExt{}, 2, 40, "stale")
+			l := learnerWith(nil, plainExt{}, 2, 40)
 			if got := l.mergeEligible(n); got != c.want {
 				t.Fatalf("mergeEligible(%s) = %v, want %v", c.kind, got, c.want)
 			}
@@ -68,7 +68,7 @@ func TestMergeNeverOffersStructuralKindsToMerger(t *testing.T) {
 	raw.Kind = contracts.KindTranscript
 	mem := &mergeMem{nodes: []contracts.Node{report, session, raw}}
 	f := &fakeMerger{}
-	l := learnerWith(mem, f, 2, 40, "stale")
+	l := learnerWith(mem, f, 2, 40)
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestMergeRejectsUmbrellaCollidingWithArchivedKey(t *testing.T) {
 		Node:   contracts.Node{Key: "facts/u", Body: "umbrella"},
 		Merged: []string{"facts/a", "facts/b"},
 	}}}
-	l := learnerWith(mem, f, 2, 40, "stale")
+	l := learnerWith(mem, f, 2, 40)
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestMergeRejectsUmbrellaCollidingWithArchivedKey(t *testing.T) {
 
 func TestValidUmbrellaRejectsDuplicateMergedKeys(t *testing.T) {
 	byKey := map[string]contracts.Node{"facts/a": stale("facts/a", "d")}
-	l := learnerWith(nil, plainExt{}, 2, 40, "stale")
+	l := learnerWith(nil, plainExt{}, 2, 40)
 	u := Umbrella{Node: contracts.Node{Key: "facts/u", Body: "b"}, Merged: []string{"facts/a", "facts/a"}}
 	if l.validUmbrella(u, byKey, make(map[string]bool)) {
 		t.Fatal("an umbrella over one repeated original must be rejected")

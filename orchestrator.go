@@ -103,9 +103,9 @@ func (c *Curator) scopeOf() contracts.MemoryScope {
 // SetScope re-roots memory mid-session. The host calls it once, when a session's
 // first prompt settles a project its launch could only guess at; what was already
 // filed stays filed, because a fact recorded under the guess is still true.
-func (c *Curator) SetScope(s contracts.MemoryScope) {
+func (c *Curator) SetScope(scope contracts.MemoryScope) {
 	c.scopeMu.Lock()
-	c.scope = s
+	c.scope = scope
 	c.scopeMu.Unlock()
 }
 
@@ -118,40 +118,40 @@ func (c *Curator) Context(ctx context.Context) string {
 	if c.mem == nil {
 		return ""
 	}
-	var b strings.Builder
+	var builder strings.Builder
 	if scope := c.scopeOf(); scope.Project != "" {
-		if sg, err := contracts.RecallScoped(ctx, c.mem, scope, 1); err == nil {
-			writeNode(&b, sg.Root)
-			for _, n := range sg.Nodes {
-				if n.Kind == contracts.KindSkill {
+		if recalled, err := contracts.RecallScoped(ctx, c.mem, scope, 1); err == nil {
+			writeNode(&builder, recalled.Root)
+			for _, node := range recalled.Nodes {
+				if node.Kind == contracts.KindSkill {
 					continue
 				}
-				writeNode(&b, n)
+				writeNode(&builder, node)
 			}
 		}
 	}
-	if sg, err := c.mem.Recall(ctx, c.session, 1); err == nil {
-		writeNode(&b, sg.Root)
-		for _, n := range sg.Nodes {
-			writeNode(&b, n)
+	if recalled, err := c.mem.Recall(ctx, c.session, 1); err == nil {
+		writeNode(&builder, recalled.Root)
+		for _, n := range recalled.Nodes {
+			writeNode(&builder, n)
 		}
 	}
-	return c.frame(strings.TrimSpace(b.String()))
+	return c.frame(strings.TrimSpace(builder.String()))
 }
 
-func writeNode(b *strings.Builder, n contracts.Node) {
-	if title := oneline(n.Title, maxContentChars); title != "" {
-		fmt.Fprintf(b, "## %s\n", strings.ReplaceAll(title, "→", "->"))
+func writeNode(builder *strings.Builder, node contracts.Node) {
+	if title := oneline(node.Title, maxContentChars); title != "" {
+		fmt.Fprintf(builder, "## %s\n", strings.ReplaceAll(title, "→", "->"))
 	}
-	if body := strings.TrimSpace(n.Body); body != "" {
-		b.WriteString(strings.ReplaceAll(body, "→", "->"))
-		b.WriteByte('\n')
+	if body := strings.TrimSpace(node.Body); body != "" {
+		builder.WriteString(strings.ReplaceAll(body, "→", "->"))
+		builder.WriteByte('\n')
 	}
 }
 
 // Observe records the turn by upserting the session node with a bounded rolling
 // transcript, so the next Context call has continuity.
-func (c *Curator) Observe(ctx context.Context, p contracts.Prompt, reply string) error {
+func (c *Curator) Observe(ctx context.Context, prompt contracts.Prompt, reply string) error {
 	if c.mem == nil {
 		return nil
 	}
@@ -159,17 +159,17 @@ func (c *Curator) Observe(ctx context.Context, p contracts.Prompt, reply string)
 	if sg, err := c.mem.Recall(ctx, c.session, 0); err == nil {
 		prev = sg.Root.Body
 	}
-	var b strings.Builder
-	b.WriteString(turnLine(p.Author, p.Content, reply))
+	var builder strings.Builder
+	builder.WriteString(turnLine(prompt.Author, prompt.Content, reply))
 	if prev != "" {
-		b.WriteByte('\n')
-		b.WriteString(capLines(prev, maxTurns-1))
+		builder.WriteByte('\n')
+		builder.WriteString(capLines(prev, maxTurns-1))
 	}
 	return c.mem.Record(ctx, contracts.Node{
 		Key:   c.session,
 		Kind:  contracts.KindSession,
 		Title: "session " + strings.TrimPrefix(c.session, "sessions/"),
-		Body:  b.String(),
+		Body:  builder.String(),
 	})
 }
 
@@ -188,29 +188,29 @@ func turnLine(author, content, reply string) string {
 	return fmt.Sprintf("- %s: %s → %s", author, content, oneline(reply, maxReplyChars))
 }
 
-func oneline(s string, limit int) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if len(s) <= limit {
-		return s
+func oneline(text string, limit int) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) <= limit {
+		return text
 	}
-	if r := []rune(s); len(r) > limit {
-		s = string(r[:limit]) + "…"
+	if r := []rune(text); len(r) > limit {
+		text = string(r[:limit]) + "…"
 	}
-	return s
+	return text
 }
 
-func capLines(s string, n int) string {
-	if n <= 0 {
+func capLines(text string, maxLines int) string {
+	if maxLines <= 0 {
 		return ""
 	}
 	count := 0
-	for i := range len(s) {
-		if s[i] == '\n' {
+	for index := range len(text) {
+		if text[index] == '\n' {
 			count++
-			if count == n {
-				return s[:i]
+			if count == maxLines {
+				return text[:index]
 			}
 		}
 	}
-	return s
+	return text
 }

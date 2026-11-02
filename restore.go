@@ -66,29 +66,29 @@ func Restore(ctx context.Context, mem contracts.Memory, key string, opts ...Rest
 	for _, o := range opts {
 		o(&cfg)
 	}
-	sg, err := mem.Recall(ctx, key, 0)
+	recalled, err := mem.Recall(ctx, key, 0)
 	if err != nil {
 		return "", err
 	}
-	n := sg.Root
-	if n.Meta[MetaMergedInto] != "" && !cfg.force {
+	root := recalled.Root
+	if root.Meta[MetaMergedInto] != "" && !cfg.force {
 		return "", ErrMergedOriginal
 	}
-	prior := n.Meta[contracts.MetaState]
+	prior := root.Meta[contracts.MetaState]
 	if prior == "" {
 		prior = contracts.StateActive
 	}
-	if n.Meta == nil {
-		n.Meta = make(map[string]string)
+	if root.Meta == nil {
+		root.Meta = make(map[string]string)
 	}
-	n.Meta[contracts.MetaState] = contracts.StateActive
-	n.Meta[contracts.MetaLastSeen] = cfg.clock().UTC().Format(time.RFC3339)
+	root.Meta[contracts.MetaState] = contracts.StateActive
+	root.Meta[contracts.MetaLastSeen] = cfg.clock().UTC().Format(time.RFC3339)
 	umbrella := ""
 	if cfg.force {
-		umbrella = n.Meta[MetaMergedInto]
-		delete(n.Meta, MetaMergedInto)
+		umbrella = root.Meta[MetaMergedInto]
+		delete(root.Meta, MetaMergedInto)
 	}
-	if err := mem.Record(ctx, n); err != nil {
+	if err := mem.Record(ctx, root); err != nil {
 		return "", err
 	}
 	if umbrella != "" {

@@ -93,10 +93,12 @@ type Learner struct {
 
 var _ contracts.Orchestrator = (*Learner)(nil)
 
+const defaultIdlePoll = 10 * time.Minute
+
 // NewLearner builds a learning orchestrator. With a nil extractor it behaves
 // exactly like the default Curator (Consolidate is a no-op).
 func NewLearner(mem contracts.Memory, session string, scope contracts.MemoryScope, ex Extractor, journal string, every int) *Learner {
-	return &Learner{Curator: NewScoped(mem, session, scope), extract: ex, journal: journal, every: every, seen: make(map[string]bool), idlePoll: 10 * time.Minute}
+	return &Learner{Curator: NewScoped(mem, session, scope), extract: ex, journal: journal, every: every, seen: make(map[string]bool), idlePoll: defaultIdlePoll}
 }
 
 // SetIdle configures the G5 inactivity trigger. sinceLastRunDays <= 0 disables
@@ -167,13 +169,13 @@ func (l *Learner) Close() error {
 }
 
 func (l *Learner) idleLoop(ctx context.Context) {
-	t := time.NewTicker(l.idlePoll)
-	defer t.Stop()
+	ticker := time.NewTicker(l.idlePoll)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-ticker.C:
 			l.idleTick(ctx)
 		}
 	}
@@ -202,8 +204,8 @@ func (l *Learner) idleTick(ctx context.Context) {
 // Consolidate holding mu (invariant 2). stampMu is released before the cadence
 // l.Consolidate call (which acquires mu), so the two locks are never held nested
 // here.
-func (l *Learner) Observe(ctx context.Context, p contracts.Prompt, reply string) error {
-	err := l.Curator.Observe(ctx, p, reply)
+func (l *Learner) Observe(ctx context.Context, prompt contracts.Prompt, reply string) error {
+	err := l.Curator.Observe(ctx, prompt, reply)
 	l.stampMu.Lock()
 	l.lastActivity = l.now()
 	var due bool
@@ -223,7 +225,7 @@ func (l *Learner) Observe(ctx context.Context, p contracts.Prompt, reply string)
 	}
 	l.stampMu.Unlock()
 	if rawSeq > 0 {
-		l.recordRaw(ctx, p, reply, rawEpoch, rawSeq)
+		l.recordRaw(ctx, prompt, reply, rawEpoch, rawSeq)
 	}
 	if due {
 		l.logFailure("memory: consolidation after turn failed", l.Consolidate(ctx))
@@ -231,7 +233,7 @@ func (l *Learner) Observe(ctx context.Context, p contracts.Prompt, reply string)
 	return err
 }
 
-func (l *Learner) recordRaw(ctx context.Context, p contracts.Prompt, reply, epoch string, seq int) {
+func (l *Learner) recordRaw(ctx context.Context, prompt contracts.Prompt, reply, epoch string, seq int) {
 	if l.mem == nil {
 		return
 	}
@@ -240,7 +242,7 @@ func (l *Learner) recordRaw(ctx context.Context, p contracts.Prompt, reply, epoc
 		Key:   fmt.Sprintf("raw/%s/%s-%d", tail, epoch, seq),
 		Kind:  contracts.KindTranscript,
 		Title: fmt.Sprintf("turn %d", seq),
-		Body:  fmt.Sprintf("%s: %s\n\nassistant: %s", p.Author, p.Content, reply),
+		Body:  fmt.Sprintf("%s: %s\n\nassistant: %s", prompt.Author, prompt.Content, reply),
 	}))
 }
 
@@ -274,15 +276,15 @@ func (l *Learner) consolidateLocked(ctx context.Context) error {
 	if err != nil && firstErr == nil {
 		firstErr = err
 	}
-	for _, c := range cands {
-		if l.seen[c.Node.Key] {
+	for _, candidate := range cands {
+		if l.seen[candidate.Node.Key] {
 			continue
 		}
-		switch perr := l.persist(ctx, c); {
+		switch perr := l.persist(ctx, candidate); {
 		case perr == nil:
-			l.seen[c.Node.Key] = true
+			l.seen[candidate.Node.Key] = true
 		case errors.Is(perr, errEnqueue):
-			l.enqueue(c)
+			l.enqueue(candidate)
 		default:
 			if firstErr == nil {
 				firstErr = perr
@@ -301,84 +303,84 @@ func (l *Learner) consolidator() (Consolidator, bool) {
 	return c, ok
 }
 
-func (l *Learner) record(ctx context.Context, c Candidate) error {
+func (l *Learner) record(ctx context.Context, candidate Candidate) error {
 	scope := l.scopeOf()
 	if l.learnedSkills {
-		c = asLearnedSkill(c, scope.Agent != "")
+		candidate = asLearnedSkill(candidate, scope.Agent != "")
 	}
-	if c.Private {
-		return contracts.RecordPrivate(ctx, l.mem, scope, c.Node)
+	if candidate.Private {
+		return contracts.RecordPrivate(ctx, l.mem, scope, candidate.Node)
 	}
-	return contracts.RecordShared(ctx, l.mem, scope, c.Node)
+	return contracts.RecordShared(ctx, l.mem, scope, candidate.Node)
 }
 
 // SetScope re-roots memory, waiting for any consolidation in flight to finish
 // first, so one pass never files half its findings under the old project and the
 // other half under the new one. Lock order is mu → scopeMu, the same direction as
 // mu → stampMu, so the three can never deadlock.
-func (l *Learner) SetScope(s contracts.MemoryScope) {
+func (l *Learner) SetScope(scope contracts.MemoryScope) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.Curator.SetScope(s)
+	l.Curator.SetScope(scope)
 }
 
-func (l *Learner) persist(ctx context.Context, c Candidate) error {
-	err := l.record(ctx, c)
+func (l *Learner) persist(ctx context.Context, candidate Candidate) error {
+	err := l.record(ctx, candidate)
 	if err == nil {
 		return nil
 	}
-	var be *contracts.BudgetError
-	if !errors.As(err, &be) {
+	var budgetErr *contracts.BudgetError
+	if !errors.As(err, &budgetErr) {
 		return err
 	}
 	cons, ok := l.consolidator()
 	if !ok {
 		slog.Warn("memory: candidate over budget and no consolidator; queued for retry",
-			"key", c.Node.Key, "runes", be.Runes, "limit", be.Limit)
+			"key", candidate.Node.Key, "runes", budgetErr.Runes, "limit", budgetErr.Limit)
 		return errEnqueue
 	}
-	merged, cerr := cons.Consolidate(ctx, c.Node, be.Limit)
-	if cerr != nil || merged.Key != c.Node.Key || merged.Body == "" || utf8.RuneCountInString(merged.Body) > be.Limit {
+	merged, cerr := cons.Consolidate(ctx, candidate.Node, budgetErr.Limit)
+	if cerr != nil || merged.Key != candidate.Node.Key || merged.Body == "" || utf8.RuneCountInString(merged.Body) > budgetErr.Limit {
 		slog.Warn("memory: consolidation did not bring candidate within budget; queued for retry",
-			"key", c.Node.Key, "runes", be.Runes, "limit", be.Limit, "err", cerr)
+			"key", candidate.Node.Key, "runes", budgetErr.Runes, "limit", budgetErr.Limit, "err", cerr)
 		return errEnqueue
 	}
-	c.Node = merged
-	rerr := l.record(ctx, c)
+	candidate.Node = merged
+	rerr := l.record(ctx, candidate)
 	if rerr == nil {
 		return nil
 	}
-	if errors.As(rerr, &be) {
+	if errors.As(rerr, &budgetErr) {
 		slog.Warn("memory: consolidated candidate still over budget; queued for retry",
-			"key", c.Node.Key, "runes", be.Runes, "limit", be.Limit)
+			"key", candidate.Node.Key, "runes", budgetErr.Runes, "limit", budgetErr.Limit)
 		return errEnqueue
 	}
 	return rerr
 }
 
-func (l *Learner) enqueue(c Candidate) {
+func (l *Learner) enqueue(candidate Candidate) {
 	for _, p := range l.pending {
-		if p.Node.Key == c.Node.Key {
+		if p.Node.Key == candidate.Node.Key {
 			return
 		}
 	}
-	l.pending = append(l.pending, c)
+	l.pending = append(l.pending, candidate)
 }
 
 func (l *Learner) drain(ctx context.Context) error {
 	var firstErr error
 	var still []Candidate
-	for _, c := range l.pending {
-		switch perr := l.persist(ctx, c); {
+	for _, candidate := range l.pending {
+		switch perr := l.persist(ctx, candidate); {
 		case perr == nil:
-			l.seen[c.Node.Key] = true
+			l.seen[candidate.Node.Key] = true
 		case errors.Is(perr, errEnqueue):
-			still = append(still, c)
+			still = append(still, candidate)
 		default:
 			if firstErr == nil {
 				firstErr = perr
 			}
-			still = append(still, c)
+			still = append(still, candidate)
 		}
 	}
 	l.pending = still
@@ -389,23 +391,23 @@ func (l *Learner) readJournalTail() string {
 	if l.journal == "" {
 		return ""
 	}
-	f, err := os.Open(l.journal)
+	journalFile, err := os.Open(l.journal)
 	if err != nil {
 		return ""
 	}
-	defer func() { l.logFailure("memory: close journal failed", f.Close()) }()
-	if fi, statErr := f.Stat(); statErr == nil && fi.Size() < l.offset {
+	defer func() { l.logFailure("memory: close journal failed", journalFile.Close()) }()
+	if fi, statErr := journalFile.Stat(); statErr == nil && fi.Size() < l.offset {
 		l.offset = 0
 	}
 	if l.offset > 0 {
-		if _, seekErr := f.Seek(l.offset, io.SeekStart); seekErr != nil {
+		if _, seekErr := journalFile.Seek(l.offset, io.SeekStart); seekErr != nil {
 			return ""
 		}
 	}
-	b, err := io.ReadAll(f)
+	data, err := io.ReadAll(journalFile)
 	if err != nil {
 		return ""
 	}
-	l.offset += int64(len(b))
-	return string(b)
+	l.offset += int64(len(data))
+	return string(data)
 }

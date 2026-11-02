@@ -262,7 +262,7 @@ func TestMergeSkipsPromotedOriginal(t *testing.T) {
 	b := stale("agents/a/skills/y", "http")
 	mem := &mergeMem{nodes: []contracts.Node{a, b}}
 	f := &fakeMerger{result: nil}
-	l := learnerWith(mem, f, 2, 40, "stale")
+	l := learnerWith(mem, f, 2, 40)
 	if err := l.Merge(context.Background()); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}

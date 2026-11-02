@@ -83,15 +83,15 @@ func skillName(raw string) string {
 	return name
 }
 
-func asLearnedSkill(c Candidate, hasPrivateScope bool) Candidate {
-	if !c.Private || !hasPrivateScope {
-		return c
+func asLearnedSkill(candidate Candidate, hasPrivateScope bool) Candidate {
+	if !candidate.Private || !hasPrivateScope {
+		return candidate
 	}
-	if !strings.HasPrefix(strings.TrimPrefix(c.Node.Key, "/"), "skills/") {
-		return c
+	if !strings.HasPrefix(strings.TrimPrefix(candidate.Node.Key, "/"), "skills/") {
+		return candidate
 	}
-	c.Node.Kind = contracts.KindSkill
-	return c
+	candidate.Node.Kind = contracts.KindSkill
+	return candidate
 }
 
 // LearnedSkills answers the active skills this session should have on disk: the
@@ -121,10 +121,9 @@ func (c *Curator) LearnedSkills(ctx context.Context) ([]contracts.Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	private, shared := partitionSkills(nodes, scope.Agent)
-	out, seen := dedupeSkills(private, shared)
+	out := dedupeSkills(partitionSkills(nodes, scope.Agent))
 	c.projectedMu.Lock()
-	c.projected = seen
+	c.projected = projectedSkills(out)
 	c.projectedMu.Unlock()
 	return out, nil
 }
@@ -138,42 +137,56 @@ func (c *Curator) recallSkills(ctx context.Context, scope contracts.MemoryScope)
 	return sg.Nodes, err
 }
 
-func partitionSkills(nodes []contracts.Node, agent string) (private, shared []contracts.Node) {
-	for _, n := range nodes {
-		if !isActiveSkill(n) {
+func partitionSkills(nodes []contracts.Node, agent string) skillPartition {
+	var part skillPartition
+	for _, node := range nodes {
+		if !isActiveSkill(node) {
 			continue
 		}
-		if agent != "" && strings.HasPrefix(n.Key, agent+"/") {
-			private = append(private, n)
+		if agent != "" && strings.HasPrefix(node.Key, agent+"/") {
+			part.private = append(part.private, node)
 			continue
 		}
-		shared = append(shared, n)
+		part.shared = append(part.shared, node)
 	}
-	return private, shared
+	return part
 }
 
-func isActiveSkill(n contracts.Node) bool {
-	if n.Kind != contracts.KindSkill {
+func isActiveSkill(node contracts.Node) bool {
+	if node.Kind != contracts.KindSkill {
 		return false
 	}
-	state := n.Meta[contracts.MetaState]
+	state := node.Meta[contracts.MetaState]
 	return state == "" || state == contracts.StateActive
 }
 
-func dedupeSkills(private, shared []contracts.Node) (out []contracts.Node, seen map[string]string) {
-	sort.Slice(private, func(i, j int) bool { return private[i].Key < private[j].Key })
-	sort.Slice(shared, func(i, j int) bool { return shared[i].Key < shared[j].Key })
-	seen = make(map[string]string, len(private)+len(shared))
-	out = make([]contracts.Node, 0, len(private)+len(shared))
-	for _, n := range append(private, shared...) {
-		name := skillTail(n.Key)
-		if name == "" || seen[name] != "" {
+func dedupeSkills(part skillPartition) []contracts.Node {
+	sort.Slice(part.private, func(i, j int) bool { return part.private[i].Key < part.private[j].Key })
+	sort.Slice(part.shared, func(i, j int) bool { return part.shared[i].Key < part.shared[j].Key })
+	out := make([]contracts.Node, 0, len(part.private)+len(part.shared))
+	seen := make(map[string]bool, len(part.private)+len(part.shared))
+	for _, node := range append(part.private, part.shared...) {
+		name := skillTail(node.Key)
+		if name == "" || seen[name] {
 			continue
 		}
-		seen[name] = n.Key
-		out = append(out, n)
+		seen[name] = true
+		out = append(out, node)
 	}
-	return out, seen
+	return out
+}
+
+func projectedSkills(skills []contracts.Node) map[string]string {
+	projected := make(map[string]string, len(skills))
+	for _, node := range skills {
+		projected[skillTail(node.Key)] = node.Key
+	}
+	return projected
+}
+
+type skillPartition struct {
+	private []contracts.Node
+	shared  []contracts.Node
 }
 
 // SkillUsed refreshes lastSeen on each named skill. The host calls it with the
@@ -217,16 +230,16 @@ func (c *Curator) SkillUsed(ctx context.Context, names []string) {
 		if key == "" {
 			continue
 		}
-		sg, err := c.mem.Recall(ctx, key, 0)
-		if err != nil || sg.Root.Kind != contracts.KindSkill {
+		recalled, err := c.mem.Recall(ctx, key, 0)
+		if err != nil || recalled.Root.Kind != contracts.KindSkill {
 			continue
 		}
-		n := sg.Root
-		if n.Meta == nil {
-			n.Meta = make(map[string]string)
+		root := recalled.Root
+		if root.Meta == nil {
+			root.Meta = make(map[string]string)
 		}
-		n.Meta[contracts.MetaLastSeen] = stamp
-		c.logFailure("memory: stamp skill failed", c.mem.Record(ctx, n))
+		root.Meta[contracts.MetaLastSeen] = stamp
+		c.logFailure("memory: stamp skill failed", c.mem.Record(ctx, root))
 	}
 }
 
@@ -237,24 +250,24 @@ func (c *Curator) SkillUsed(ctx context.Context, names []string) {
 // Revoking does not undo a promotion that already happened: the shared copy is a
 // node of its own, unmade with memory unlink and memory restore. Revoking only
 // stops the next one, which is what a revoke can honestly promise.
-func ApproveSkill(ctx context.Context, m contracts.Memory, key string, approve bool) error {
-	sg, err := m.Recall(ctx, key, 0)
+func ApproveSkill(ctx context.Context, memory contracts.Memory, key string, approve bool) error {
+	recalled, err := memory.Recall(ctx, key, 0)
 	if err != nil {
 		return fmt.Errorf("approve %s: %w", key, err)
 	}
-	if sg.Root.Kind != contracts.KindSkill {
-		return fmt.Errorf("approve %s: %w (kind %q)", key, ErrNotSkill, sg.Root.Kind)
+	if recalled.Root.Kind != contracts.KindSkill {
+		return fmt.Errorf("approve %s: %w (kind %q)", key, ErrNotSkill, recalled.Root.Kind)
 	}
-	n := sg.Root
-	if n.Meta == nil {
-		n.Meta = make(map[string]string)
+	root := recalled.Root
+	if root.Meta == nil {
+		root.Meta = make(map[string]string)
 	}
 	if approve {
-		n.Meta[MetaApproved] = "true"
+		root.Meta[MetaApproved] = "true"
 	} else {
-		delete(n.Meta, MetaApproved)
+		delete(root.Meta, MetaApproved)
 	}
-	return m.Record(ctx, n)
+	return memory.Record(ctx, root)
 }
 
 func skillTail(key string) string { return key[strings.LastIndex(key, "/")+1:] }

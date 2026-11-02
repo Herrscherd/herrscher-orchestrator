@@ -64,7 +64,7 @@ func (l *Learner) Merge(ctx context.Context) error {
 	if l.mergeMin <= 0 || l.mem == nil {
 		return nil
 	}
-	m, ok := l.merger()
+	merger, ok := l.merger()
 	if !ok {
 		return nil
 	}
@@ -76,7 +76,7 @@ func (l *Learner) Merge(ctx context.Context) error {
 	existing := l.existingKeys(ctx, nodes)
 	var firstErr error
 	for domain, group := range groups {
-		if err := l.mergeDomain(ctx, m, domain, group, existing); err != nil && firstErr == nil {
+		if err := l.mergeDomain(ctx, merger, domain, group, existing); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -85,11 +85,11 @@ func (l *Learner) Merge(ctx context.Context) error {
 
 func mergeGroups(nodes []contracts.Node, eligible func(contracts.Node) bool) map[string][]contracts.Node {
 	groups := make(map[string][]contracts.Node)
-	for _, n := range nodes {
-		if n.Meta[MetaMergedInto] != "" || !eligible(n) {
+	for _, node := range nodes {
+		if node.Meta[MetaMergedInto] != "" || !eligible(node) {
 			continue
 		}
-		groups[n.Meta["domain"]] = append(groups[n.Meta["domain"]], n)
+		groups[node.Meta["domain"]] = append(groups[node.Meta["domain"]], node)
 	}
 	return groups
 }
@@ -108,14 +108,14 @@ func (l *Learner) existingKeys(ctx context.Context, nodes []contracts.Node) map[
 	return existing
 }
 
-func (l *Learner) mergeDomain(ctx context.Context, m Merger, domain string, group []contracts.Node, existing map[string]bool) error {
+func (l *Learner) mergeDomain(ctx context.Context, merger Merger, domain string, group []contracts.Node, existing map[string]bool) error {
 	if len(group) < l.mergeMin {
 		return nil
 	}
 	if len(group) > l.mergeMax {
 		group = group[:l.mergeMax]
 	}
-	umbrellas, err := m.Merge(ctx, group)
+	umbrellas, err := merger.Merge(ctx, group)
 	if err != nil {
 		slog.Warn("memory: merge group failed", "domain", domain, "size", len(group), "err", err)
 		return err
@@ -133,14 +133,14 @@ func mergeExcludedKind(k contracts.NodeKind) bool {
 	return k == ReportKind || k == contracts.KindSession || k == contracts.KindTranscript
 }
 
-func (l *Learner) mergeEligible(n contracts.Node) bool {
-	if mergeExcludedKind(n.Kind) {
+func (l *Learner) mergeEligible(node contracts.Node) bool {
+	if mergeExcludedKind(node.Kind) {
 		return false
 	}
-	if n.Meta[MetaPromotedTo] != "" {
+	if node.Meta[MetaPromotedTo] != "" {
 		return false
 	}
-	state := n.Meta[contracts.MetaState]
+	state := node.Meta[contracts.MetaState]
 	if state == "" {
 		state = contracts.StateActive
 	}
@@ -154,38 +154,38 @@ func (l *Learner) mergeEligible(n contracts.Node) bool {
 	}
 }
 
-func (l *Learner) applyUmbrella(ctx context.Context, u Umbrella, group []contracts.Node, existing map[string]bool) error {
+func (l *Learner) applyUmbrella(ctx context.Context, umbrella Umbrella, group []contracts.Node, existing map[string]bool) error {
 	byKey := make(map[string]contracts.Node, len(group))
 	for _, n := range group {
 		byKey[n.Key] = n
 	}
-	if !l.validUmbrella(u, byKey, existing) {
+	if !l.validUmbrella(umbrella, byKey, existing) {
 		return nil
 	}
-	if err := l.mem.Record(ctx, u.Node); err != nil {
+	if err := l.mem.Record(ctx, umbrella.Node); err != nil {
 		return err
 	}
-	existing[u.Node.Key] = true
-	l.transitions = append(l.transitions, Transition{Key: u.Node.Key, From: "", To: contracts.StateActive, Kind: "merge"})
-	return l.archiveMerged(ctx, u, byKey)
+	existing[umbrella.Node.Key] = true
+	l.transitions = append(l.transitions, Transition{Key: umbrella.Node.Key, From: "", To: contracts.StateActive, Kind: "merge"})
+	return l.archiveMerged(ctx, umbrella, byKey)
 }
 
-func (l *Learner) archiveMerged(ctx context.Context, u Umbrella, byKey map[string]contracts.Node) error {
+func (l *Learner) archiveMerged(ctx context.Context, umbrella Umbrella, byKey map[string]contracts.Node) error {
 	var firstErr error
-	applied := make(map[string]bool, len(u.Merged))
-	for _, k := range u.Merged {
-		if applied[k] {
+	applied := make(map[string]bool, len(umbrella.Merged))
+	for _, mergedKey := range umbrella.Merged {
+		if applied[mergedKey] {
 			continue
 		}
-		applied[k] = true
-		if err := l.archiveOriginal(ctx, u, k, byKey[k]); err != nil && firstErr == nil {
+		applied[mergedKey] = true
+		if err := l.archiveOriginal(ctx, umbrella, mergedKey, byKey[mergedKey]); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	return firstErr
 }
 
-func (l *Learner) archiveOriginal(ctx context.Context, u Umbrella, k string, orig contracts.Node) error {
+func (l *Learner) archiveOriginal(ctx context.Context, umbrella Umbrella, key string, orig contracts.Node) error {
 	prevState := orig.Meta[contracts.MetaState]
 	if prevState == "" {
 		prevState = contracts.StateActive
@@ -193,36 +193,36 @@ func (l *Learner) archiveOriginal(ctx context.Context, u Umbrella, k string, ori
 	if orig.Meta == nil {
 		orig.Meta = make(map[string]string)
 	}
-	orig.Meta[MetaMergedInto] = u.Node.Key
+	orig.Meta[MetaMergedInto] = umbrella.Node.Key
 	orig.Meta[contracts.MetaState] = contracts.StateArchived
 	if err := l.mem.Record(ctx, orig); err != nil {
 		return err
 	}
-	l.transitions = append(l.transitions, Transition{Key: k, From: prevState, To: contracts.StateArchived, Kind: "merge"})
-	return l.mem.Links(ctx, k, u.Node.Key, "merged-into")
+	l.transitions = append(l.transitions, Transition{Key: key, From: prevState, To: contracts.StateArchived, Kind: "merge"})
+	return l.mem.Links(ctx, key, umbrella.Node.Key, "merged-into")
 }
 
-func (l *Learner) validUmbrella(u Umbrella, byKey map[string]contracts.Node, existing map[string]bool) bool {
+func (l *Learner) validUmbrella(umbrella Umbrella, byKey map[string]contracts.Node, existing map[string]bool) bool {
 	reason := ""
 	switch {
-	case u.Node.Key == "":
+	case umbrella.Node.Key == "":
 		reason = "empty umbrella key"
-	case u.Node.Body == "":
+	case umbrella.Node.Body == "":
 		reason = "empty umbrella body"
 	}
 	if reason == "" {
-		if existing[u.Node.Key] {
+		if existing[umbrella.Node.Key] {
 			reason = "umbrella key collides with an existing node"
 		}
 	}
 	if reason == "" {
 		distinct := make(map[string]bool)
-		for _, k := range u.Merged {
-			if _, ok := byKey[k]; !ok {
+		for _, mergedKey := range umbrella.Merged {
+			if _, ok := byKey[mergedKey]; !ok {
 				reason = "merged key outside candidate group"
 				break
 			}
-			distinct[k] = true
+			distinct[mergedKey] = true
 		}
 		if reason == "" && len(distinct) < 2 {
 			reason = "fewer than 2 distinct originals"
@@ -230,7 +230,7 @@ func (l *Learner) validUmbrella(u Umbrella, byKey map[string]contracts.Node, exi
 	}
 	if reason != "" {
 		slog.Warn("memory: rejecting invalid umbrella",
-			"key", u.Node.Key, "reason", reason, "merged", len(u.Merged))
+			"key", umbrella.Node.Key, "reason", reason, "merged", len(umbrella.Merged))
 		return false
 	}
 	return true

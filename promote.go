@@ -26,19 +26,19 @@ func (l *Learner) SetPromote(minAge time.Duration) {
 	l.promoteMinAge = minAge
 }
 
-func (l *Learner) promoteEligible(n contracts.Node, _ time.Time) bool {
-	state := n.Meta[contracts.MetaState]
+func (l *Learner) promoteEligible(node contracts.Node, _ time.Time) bool {
+	state := node.Meta[contracts.MetaState]
 	if state != "" && state != contracts.StateActive {
 		return false
 	}
-	if n.Meta[MetaMergedInto] != "" || n.Meta[MetaPromotedTo] != "" {
+	if node.Meta[MetaMergedInto] != "" || node.Meta[MetaPromotedTo] != "" {
 		return false
 	}
-	if n.Kind == contracts.KindSkill && n.Meta[MetaApproved] == "" {
+	if node.Kind == contracts.KindSkill && node.Meta[MetaApproved] == "" {
 		return false
 	}
-	capturedAt, err1 := time.Parse(time.RFC3339, n.Meta["capturedAt"])
-	lastSeen, err2 := time.Parse(time.RFC3339, n.Meta[contracts.MetaLastSeen])
+	capturedAt, err1 := time.Parse(time.RFC3339, node.Meta["capturedAt"])
+	lastSeen, err2 := time.Parse(time.RFC3339, node.Meta[contracts.MetaLastSeen])
 	if err1 != nil || err2 != nil {
 		return false
 	}
@@ -51,47 +51,47 @@ func promotedKey(project, agentKey string) string {
 	return project + "/" + tail
 }
 
-func cloneMeta(m map[string]string) map[string]string {
-	out := make(map[string]string, len(m))
-	for k, v := range m {
+func cloneMeta(meta map[string]string) map[string]string {
+	out := make(map[string]string, len(meta))
+	for k, v := range meta {
 		out[k] = v
 	}
 	return out
 }
 
 func (l *Learner) sharedKeyTaken(ctx context.Context, target string) bool {
-	sg, err := l.mem.Recall(ctx, target, 0)
-	if err != nil || sg.Root.Key != target {
+	recalled, err := l.mem.Recall(ctx, target, 0)
+	if err != nil || recalled.Root.Key != target {
 		return false
 	}
-	if sg.Root.Body == "" && sg.Root.Title == "" {
+	if recalled.Root.Body == "" && recalled.Root.Title == "" {
 		return false
 	}
-	return sg.Root.Meta[MetaPromotedFrom] == ""
+	return recalled.Root.Meta[MetaPromotedFrom] == ""
 }
 
-func (l *Learner) applyPromotion(ctx context.Context, n contracts.Node) error {
+func (l *Learner) applyPromotion(ctx context.Context, node contracts.Node) error {
 	scope := l.scopeOf()
-	dup := n
-	dup.Key = promotedKey(scope.Project, n.Key)
-	dup.Meta = cloneMeta(n.Meta)
+	dup := node
+	dup.Key = promotedKey(scope.Project, node.Key)
+	dup.Meta = cloneMeta(node.Meta)
 	delete(dup.Meta, MetaPromotedTo)
-	dup.Meta[MetaPromotedFrom] = n.Key
+	dup.Meta[MetaPromotedFrom] = node.Key
 	if l.sharedKeyTaken(ctx, dup.Key) {
-		slog.Warn("memory: skipping promotion over an unrelated shared node", "from", n.Key, "to", dup.Key)
+		slog.Warn("memory: skipping promotion over an unrelated shared node", "from", node.Key, "to", dup.Key)
 		return nil
 	}
 	if err := contracts.RecordShared(ctx, l.mem, scope, dup); err != nil {
 		return err
 	}
-	if err := l.mem.Links(ctx, n.Key, dup.Key, "promoted-to"); err != nil {
+	if err := l.mem.Links(ctx, node.Key, dup.Key, "promoted-to"); err != nil {
 		return err
 	}
-	if n.Meta == nil {
-		n.Meta = make(map[string]string)
+	if node.Meta == nil {
+		node.Meta = make(map[string]string)
 	}
-	n.Meta[MetaPromotedTo] = dup.Key
-	return l.mem.Record(ctx, n)
+	node.Meta[MetaPromotedTo] = dup.Key
+	return l.mem.Record(ctx, node)
 }
 
 // Promote copies each eligible private node of this agent's own scope into the
@@ -111,14 +111,14 @@ func (l *Learner) Promote(ctx context.Context) error {
 	prefix := scope.Agent + "/"
 	now := l.now().UTC()
 	var firstErr error
-	for _, n := range nodes {
-		if !strings.HasPrefix(n.Key, prefix) {
+	for _, node := range nodes {
+		if !strings.HasPrefix(node.Key, prefix) {
 			continue
 		}
-		if !l.promoteEligible(n, now) {
+		if !l.promoteEligible(node, now) {
 			continue
 		}
-		if err := l.applyPromotion(ctx, n); err != nil && firstErr == nil {
+		if err := l.applyPromotion(ctx, node); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
