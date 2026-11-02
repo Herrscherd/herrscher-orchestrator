@@ -22,7 +22,6 @@ func promoNode(key, state string, ageDays int) contracts.Node {
 }
 
 func TestPromoteEligible(t *testing.T) {
-	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	l := NewLearner(nil, "s", contracts.MemoryScope{}, plainExt{}, "", 0)
 	l.SetPromote(10 * 24 * time.Hour)
 
@@ -40,7 +39,7 @@ func TestPromoteEligible(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := l.promoteEligible(c.node, now); got != c.want {
+			if got := l.promoteEligible(c.node); got != c.want {
 				t.Errorf("promoteEligible = %v, want %v", got, c.want)
 			}
 		})
@@ -48,18 +47,17 @@ func TestPromoteEligible(t *testing.T) {
 }
 
 func TestPromoteEligibleTerminalLabels(t *testing.T) {
-	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	l := NewLearner(nil, "s", contracts.MemoryScope{}, plainExt{}, "", 0)
 	l.SetPromote(10 * 24 * time.Hour)
 
 	merged := promoNode("agents/a/skills/x", contracts.StateActive, 20)
 	merged.Meta[MetaMergedInto] = "agents/a/u"
-	if l.promoteEligible(merged, now) {
+	if l.promoteEligible(merged) {
 		t.Error("a merged-away node must never be eligible")
 	}
 	promoted := promoNode("agents/a/skills/x", contracts.StateActive, 20)
 	promoted.Meta[MetaPromotedTo] = "projects/p/skills/x"
-	if l.promoteEligible(promoted, now) {
+	if l.promoteEligible(promoted) {
 		t.Error("an already-promoted node must never be re-eligible")
 	}
 }
@@ -72,14 +70,14 @@ func TestPromoteEligibleBadTimestamps(t *testing.T) {
 	noCaptured := contracts.Node{Key: "agents/a/x", Meta: map[string]string{
 		contracts.MetaLastSeen: now.Format(time.RFC3339),
 	}}
-	if l.promoteEligible(noCaptured, now) {
+	if l.promoteEligible(noCaptured) {
 		t.Error("missing capturedAt must fail eligibility, not panic")
 	}
 	badStamp := contracts.Node{Key: "agents/a/x", Meta: map[string]string{
 		"capturedAt":           "not-a-time",
 		contracts.MetaLastSeen: now.Format(time.RFC3339),
 	}}
-	if l.promoteEligible(badStamp, now) {
+	if l.promoteEligible(badStamp) {
 		t.Error("unparseable capturedAt must fail eligibility")
 	}
 }

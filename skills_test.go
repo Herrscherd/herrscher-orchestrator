@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -472,7 +473,6 @@ func TestPromoteEligibleGatesSkillsOnApproval(t *testing.T) {
 	}
 
 	l := &Learner{promoteMinAge: 24 * time.Hour}
-	now := time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)
 
 	cases := []struct {
 		name string
@@ -485,7 +485,7 @@ func TestPromoteEligibleGatesSkillsOnApproval(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := l.promoteEligible(tc.node, now); got != tc.want {
+			if got := l.promoteEligible(tc.node); got != tc.want {
 				t.Errorf("promoteEligible = %v, want %v", got, tc.want)
 			}
 		})
@@ -526,8 +526,8 @@ func TestApproveSkillRefusesWhatIsNotASkill(t *testing.T) {
 	if err == nil {
 		t.Fatal("approved a node that is not a skill")
 	}
-	if !strings.Contains(err.Error(), "projects/p/notes/a-fact") {
-		t.Errorf("the error must name the key: %v", err)
+	if !errors.Is(err, ErrNotSkill) {
+		t.Errorf("ApproveSkill error = %v, want it to wrap ErrNotSkill", err)
 	}
 }
 

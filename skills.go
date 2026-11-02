@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"sort"
 	"strings"
@@ -47,7 +46,7 @@ func (c *Curator) recordSkill(ctx context.Context, rawName, body string) {
 	}
 	scope := c.scopeOf()
 	if scope.Agent == "" {
-		slog.Warn("memory: a skill was written by a session with no private memory root, so it was dropped rather than shared with the project",
+		c.log.Warn("memory: a skill was written by a session with no private memory root, so it was dropped rather than shared with the project",
 			"skill", name, "project", scope.Project)
 		return
 	}
@@ -57,10 +56,10 @@ func (c *Curator) recordSkill(ctx context.Context, rawName, body string) {
 		Kind:  contracts.KindSkill,
 		Title: name,
 		Body:  body,
-		Meta:  map[string]string{contracts.MetaLastSeen: stamp, "capturedAt": stamp},
+		Meta:  map[string]string{contracts.MetaLastSeen: stamp, metaCapturedAt: stamp},
 	}
-	if sg, err := c.mem.Recall(ctx, node.Key, 0); err == nil && sg.Root.Meta["capturedAt"] != "" {
-		node.Meta["capturedAt"] = sg.Root.Meta["capturedAt"]
+	if sg, err := c.mem.Recall(ctx, node.Key, 0); err == nil && sg.Root.Meta[metaCapturedAt] != "" {
+		node.Meta[metaCapturedAt] = sg.Root.Meta[metaCapturedAt]
 	}
 	c.logFailure("memory: record private skill failed", contracts.RecordPrivate(ctx, c.mem, scope, node))
 }

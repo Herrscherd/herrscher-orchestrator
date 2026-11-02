@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"hash/fnv"
 	"regexp"
 	"strconv"
 	"strings"
@@ -107,10 +106,22 @@ func (c *Curator) frame(digest string) string {
 	return builder.String()
 }
 
+const (
+	fnvOffsetBasis64 uint64 = 14695981039346656037
+	fnvPrime64       uint64 = 1099511628211
+)
+
+func fnv1a64(text string) uint64 {
+	hash := fnvOffsetBasis64
+	for index := range len(text) {
+		hash ^= uint64(text[index])
+		hash *= fnvPrime64
+	}
+	return hash
+}
+
 func factKey(prefix, title string) string {
-	sum := fnv.New64a()
-	_, _ = sum.Write([]byte(title))
-	return prefix + "/notes/" + slug(title) + "-" + strconv.FormatUint(sum.Sum64(), 16)
+	return prefix + "/notes/" + slug(title) + "-" + strconv.FormatUint(fnv1a64(title), 16)
 }
 
 const maxSlugLen = 60

@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -20,13 +19,15 @@ const MetaPromotedTo = "promotedTo"
 // was promoted from (the back-pointer counterpart to MetaPromotedTo).
 const MetaPromotedFrom = "promotedFrom"
 
+const metaCapturedAt = "capturedAt"
+
 // SetPromote configures the ★ cross-agent promotion pass. minAge <= 0 disables
 // the pass (default).
 func (l *Learner) SetPromote(minAge time.Duration) {
 	l.promoteMinAge = minAge
 }
 
-func (l *Learner) promoteEligible(node contracts.Node, _ time.Time) bool {
+func (l *Learner) promoteEligible(node contracts.Node) bool {
 	state := node.Meta[contracts.MetaState]
 	if state != "" && state != contracts.StateActive {
 		return false
@@ -37,7 +38,7 @@ func (l *Learner) promoteEligible(node contracts.Node, _ time.Time) bool {
 	if node.Kind == contracts.KindSkill && node.Meta[MetaApproved] == "" {
 		return false
 	}
-	capturedAt, err1 := time.Parse(time.RFC3339, node.Meta["capturedAt"])
+	capturedAt, err1 := time.Parse(time.RFC3339, node.Meta[metaCapturedAt])
 	lastSeen, err2 := time.Parse(time.RFC3339, node.Meta[contracts.MetaLastSeen])
 	if err1 != nil || err2 != nil {
 		return false
@@ -78,7 +79,7 @@ func (l *Learner) applyPromotion(ctx context.Context, node contracts.Node) error
 	delete(dup.Meta, MetaPromotedTo)
 	dup.Meta[MetaPromotedFrom] = node.Key
 	if l.sharedKeyTaken(ctx, dup.Key) {
-		slog.Warn("memory: skipping promotion over an unrelated shared node", "from", node.Key, "to", dup.Key)
+		l.log.Warn("memory: skipping promotion over an unrelated shared node", "from", node.Key, "to", dup.Key)
 		return nil
 	}
 	if err := contracts.RecordShared(ctx, l.mem, scope, dup); err != nil {
@@ -109,13 +110,12 @@ func (l *Learner) Promote(ctx context.Context) error {
 		return err
 	}
 	prefix := scope.Agent + "/"
-	now := l.now().UTC()
 	var firstErr error
 	for _, node := range nodes {
 		if !strings.HasPrefix(node.Key, prefix) {
 			continue
 		}
-		if !l.promoteEligible(node, now) {
+		if !l.promoteEligible(node) {
 			continue
 		}
 		if err := l.applyPromotion(ctx, node); err != nil && firstErr == nil {

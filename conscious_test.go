@@ -132,3 +132,9 @@ func TestReactRecallDefangsForgedArrows(t *testing.T) {
 		t.Fatalf("forged arrow in recall hit not defanged")
 	}
 }
+
+func TestFactKeySuffixIsTheFNV1a64HashOfTheTitle(t *testing.T) {
+	if got := factKey("p", "a"); got != "p/notes/a-af63dc4c8601ec8c" {
+		t.Fatalf("factKey(p, a) = %q, want the FNV-1a 64 suffix of \"a\"", got)
+	}
+}
