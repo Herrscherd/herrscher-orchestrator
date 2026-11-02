@@ -228,7 +228,9 @@ func TestRestoreTransitionAppendIsSynchronised(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_ = l.Restore(context.Background(), string(rune('a'+i)))
+			if err := l.Restore(context.Background(), string(rune('a'+i))); err != nil {
+				t.Error(err)
+			}
 		}(i)
 	}
 	wg.Wait()

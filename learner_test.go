@@ -134,7 +134,9 @@ func TestConsolidateReadsJournalFile(t *testing.T) {
 	mem := newRec()
 	ex := &fakeExtractor{}
 	l := NewLearner(mem, "alpha", contracts.MemoryScope{Project: "projects/g"}, ex, journal, 0)
-	_ = l.Consolidate(context.Background())
+	if err := l.Consolidate(context.Background()); err != nil {
+		t.Error(err)
+	}
 	if ex.gotJournal == "" || ex.gotJournal[:3] != "123" {
 		t.Fatalf("extractor did not receive journal content: %q", ex.gotJournal)
 	}
@@ -183,11 +185,15 @@ func TestObserveTriggersConsolidateEveryN(t *testing.T) {
 	ex := &fakeExtractor{}
 	l := NewLearner(mem, "alpha", contracts.MemoryScope{Project: "p"}, ex, "", 2)
 	ctx := context.Background()
-	_ = l.Observe(ctx, contracts.Prompt{Author: "a", Content: "one"}, "r1")
+	if err := l.Observe(ctx, contracts.Prompt{Author: "a", Content: "one"}, "r1"); err != nil {
+		t.Error(err)
+	}
 	if ex.calls != 0 {
 		t.Fatalf("should not consolidate after 1 turn (every=2), calls=%d", ex.calls)
 	}
-	_ = l.Observe(ctx, contracts.Prompt{Author: "a", Content: "two"}, "r2")
+	if err := l.Observe(ctx, contracts.Prompt{Author: "a", Content: "two"}, "r2"); err != nil {
+		t.Error(err)
+	}
 	if ex.calls != 1 {
 		t.Fatalf("should consolidate on the 2nd turn, calls=%d", ex.calls)
 	}

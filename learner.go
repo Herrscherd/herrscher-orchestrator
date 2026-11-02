@@ -188,7 +188,7 @@ func (l *Learner) idleTick(ctx context.Context) {
 	if !l.mu.TryLock() {
 		return
 	}
-	_ = l.consolidateLocked(ctx)
+	l.logFailure("memory: idle consolidation failed", l.consolidateLocked(ctx))
 	l.mu.Unlock()
 }
 
@@ -225,7 +225,7 @@ func (l *Learner) Observe(ctx context.Context, p contracts.Prompt, reply string)
 		l.recordRaw(ctx, p, reply, rawEpoch, rawSeq)
 	}
 	if due {
-		_ = l.Consolidate(ctx)
+		l.logFailure("memory: consolidation after turn failed", l.Consolidate(ctx))
 	}
 	return err
 }
@@ -235,12 +235,12 @@ func (l *Learner) recordRaw(ctx context.Context, p contracts.Prompt, reply, epoc
 		return
 	}
 	tail := strings.ReplaceAll(strings.TrimPrefix(l.session, "sessions/"), "/", "-")
-	_ = l.mem.Record(ctx, contracts.Node{
+	l.logFailure("memory: raw archive failed", l.mem.Record(ctx, contracts.Node{
 		Key:   fmt.Sprintf("raw/%s/%s-%d", tail, epoch, seq),
 		Kind:  contracts.KindTranscript,
 		Title: fmt.Sprintf("turn %d", seq),
 		Body:  fmt.Sprintf("%s: %s\n\nassistant: %s", p.Author, p.Content, reply),
-	})
+	}))
 }
 
 // Consolidate runs the extractor over the journal + transcript and persists each
@@ -289,10 +289,10 @@ func (l *Learner) consolidateLocked(ctx context.Context) error {
 			}
 		}
 	}
-	_ = l.Sweep(ctx)
-	_ = l.Merge(ctx)
-	_ = l.Promote(ctx)
-	_ = l.report(ctx)
+	l.logFailure("memory: sweep failed", l.Sweep(ctx))
+	l.logFailure("memory: merge failed", l.Merge(ctx))
+	l.logFailure("memory: promote failed", l.Promote(ctx))
+	l.logFailure("memory: report failed", l.report(ctx))
 	return firstErr
 }
 
@@ -391,7 +391,7 @@ func (l *Learner) readJournalTail() string {
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
+	defer func() { l.logFailure("memory: close journal failed", f.Close()) }()
 	if fi, err := f.Stat(); err == nil && fi.Size() < l.offset {
 		l.offset = 0
 	}

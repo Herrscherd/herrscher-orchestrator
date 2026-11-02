@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -14,6 +15,8 @@ import (
 )
 
 const maxSkillNameRunes = 60
+
+var ErrNotSkill = errors.New("not a skill")
 
 var skillMarker = regexp.MustCompile(`(?is)<\s*skill\s+name\s*=\s*"([^"]*)"\s*>(.*?)<\s*/\s*skill\s*>`)
 
@@ -58,7 +61,7 @@ func (c *Curator) recordSkill(ctx context.Context, rawName, body string) {
 	if sg, err := c.mem.Recall(ctx, node.Key, 0); err == nil && sg.Root.Meta["capturedAt"] != "" {
 		node.Meta["capturedAt"] = sg.Root.Meta["capturedAt"]
 	}
-	_ = contracts.RecordPrivate(ctx, c.mem, scope, node)
+	c.logFailure("memory: record private skill failed", contracts.RecordPrivate(ctx, c.mem, scope, node))
 }
 
 func skillName(raw string) string {
@@ -208,7 +211,7 @@ func (c *Curator) SkillUsed(ctx context.Context, names []string) {
 			n.Meta = map[string]string{}
 		}
 		n.Meta[contracts.MetaLastSeen] = stamp
-		_ = c.mem.Record(ctx, n)
+		c.logFailure("memory: stamp skill failed", c.mem.Record(ctx, n))
 	}
 }
 
@@ -225,7 +228,7 @@ func ApproveSkill(ctx context.Context, m contracts.Memory, key string, approve b
 		return fmt.Errorf("approve %s: %w", key, err)
 	}
 	if sg.Root.Kind != contracts.KindSkill {
-		return fmt.Errorf("approve %s: not a skill (kind %q)", key, sg.Root.Kind)
+		return fmt.Errorf("approve %s: %w (kind %q)", key, ErrNotSkill, sg.Root.Kind)
 	}
 	n := sg.Root
 	if n.Meta == nil {

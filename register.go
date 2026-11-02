@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -41,18 +43,35 @@ func init() {
 			stale := staleDuration(cfg.Get("stale-days"), 30)
 			archive := staleDuration(cfg.Get("archive-days"), 90)
 			learnedSkills := boolSetting(cfg.Get("learned-skills"), false)
+			logger := slog.Default()
 			if ex := lookupExtractor(cfg.Get("memory.extractor")); ex != nil {
-				every, _ := strconv.Atoi(cfg.Get("memory.consolidate-every"))
+				every, err := intSetting(cfg, "memory.consolidate-every", 0)
+				if err != nil {
+					return nil, err
+				}
 				l := NewLearner(mem, cfg.Get("session"), scope, ex, cfg.Get("memory.journal"), every)
+				l.SetLogger(logger)
 				l.SetStaleness(stale, archive)
-				mergeMin, _ := strconv.Atoi(cfg.Get("merge-min-nodes"))
-				mergeMax, _ := strconv.Atoi(cfg.Get("merge-max"))
+				mergeMin, err := intSetting(cfg, "merge-min-nodes", 0)
+				if err != nil {
+					return nil, err
+				}
+				mergeMax, err := intSetting(cfg, "merge-max", 0)
+				if err != nil {
+					return nil, err
+				}
 				l.SetMerge(mergeMin, mergeMax, cfg.Get("merge-target"))
 				reportEnabled := boolSetting(cfg.Get("report-enabled"), true)
 				l.SetReport(reportEnabled, cfg.Get("report-prefix"))
-				promoteDays, _ := strconv.Atoi(cfg.Get("promote-min-age-days"))
+				promoteDays, err := intSetting(cfg, "promote-min-age-days", 0)
+				if err != nil {
+					return nil, err
+				}
 				l.SetPromote(time.Duration(promoteDays) * 24 * time.Hour)
-				idleDays, _ := strconv.Atoi(cfg.Get("idle-days"))
+				idleDays, err := intSetting(cfg, "idle-days", 0)
+				if err != nil {
+					return nil, err
+				}
 				idleHours := 2
 				if v, err := strconv.Atoi(cfg.Get("idle-hours")); err == nil {
 					idleHours = v
@@ -64,11 +83,38 @@ func init() {
 				return l, nil
 			}
 			c := NewScoped(mem, cfg.Get("session"), scope)
+			c.SetLogger(logger)
 			c.SetStaleness(stale, archive)
 			c.SetLearnedSkills(learnedSkills)
 			return c, nil
 		},
 	})
+}
+
+type SettingError struct {
+	Key   string
+	Value string
+	Err   error
+}
+
+func (e SettingError) Error() string {
+	return fmt.Sprintf("setting %s: %q is not an integer: %v", e.Key, e.Value, e.Err)
+}
+
+func (e SettingError) Unwrap() error {
+	return e.Err
+}
+
+func intSetting(cfg contracts.PluginConfig, key string, def int) (int, error) {
+	raw := cfg.Get(key)
+	if raw == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, SettingError{Key: key, Value: raw, Err: err}
+	}
+	return n, nil
 }
 
 func staleDuration(v string, defaultDays int) time.Duration {

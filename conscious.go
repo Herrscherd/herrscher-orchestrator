@@ -55,16 +55,19 @@ func (c *Curator) recall(ctx context.Context, query string) {
 	if query == "" || len(c.pending) >= maxPending {
 		return
 	}
-	var hits []contracts.Node
-	if scope := c.scopeOf(); scope.Project != "" {
-		hits, _ = contracts.RecallRelevant(ctx, c.mem, scope, query, recallK)
-	} else {
-		hits, _ = c.mem.Search(ctx, contracts.Query{Text: query, Ranked: true, Limit: recallK})
-	}
+	hits, err := c.search(ctx, query)
+	c.logFailure("memory: recall failed", err)
 	if room := maxPending - len(c.pending); len(hits) > room {
 		hits = hits[:room]
 	}
 	c.pending = append(c.pending, hits...)
+}
+
+func (c *Curator) search(ctx context.Context, query string) ([]contracts.Node, error) {
+	if scope := c.scopeOf(); scope.Project != "" {
+		return contracts.RecallRelevant(ctx, c.mem, scope, query, recallK)
+	}
+	return c.mem.Search(ctx, contracts.Query{Text: query, Ranked: true, Limit: recallK})
 }
 
 func (c *Curator) remember(ctx context.Context, fact string) {
@@ -75,11 +78,11 @@ func (c *Curator) remember(ctx context.Context, fact string) {
 	node := contracts.Node{Kind: contracts.KindDecision, Title: title, Body: fact}
 	if scope := c.scopeOf(); scope.Project != "" {
 		node.Key = factKey(scope.Project, title)
-		_ = contracts.RecordShared(ctx, c.mem, scope, node)
+		c.logFailure("memory: remember failed", contracts.RecordShared(ctx, c.mem, scope, node))
 		return
 	}
 	node.Key = factKey(c.session, title)
-	_ = c.mem.Record(ctx, node)
+	c.logFailure("memory: remember failed", c.mem.Record(ctx, node))
 }
 
 func (c *Curator) frame(digest string) string {

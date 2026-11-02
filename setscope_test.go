@@ -36,7 +36,9 @@ func TestSetScopeIsSafeAlongsideAConsolidate(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 50; i++ {
-			_ = l.Consolidate(context.Background())
+			if err := l.Consolidate(context.Background()); err != nil {
+				t.Error(err)
+			}
 		}
 	}()
 	go func() {

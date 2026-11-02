@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
@@ -91,7 +92,9 @@ func Restore(ctx context.Context, mem contracts.Memory, key string, opts ...Rest
 		return "", err
 	}
 	if umbrella != "" {
-		_ = mem.Unlink(ctx, key, umbrella)
+		if err := mem.Unlink(ctx, key, umbrella); err != nil {
+			return "", fmt.Errorf("unlink %s from %s: %w", key, umbrella, err)
+		}
 	}
 	return prior, nil
 }

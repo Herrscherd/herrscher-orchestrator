@@ -153,13 +153,17 @@ func TestConcurrentObserveAndConsolidate(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 200; i++ {
-			_ = l.Observe(context.Background(), contracts.Prompt{Author: "a", Content: "hi"}, "yo")
+			if err := l.Observe(context.Background(), contracts.Prompt{Author: "a", Content: "hi"}, "yo"); err != nil {
+				t.Error(err)
+			}
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 200; i++ {
-			_ = l.Consolidate(context.Background())
+			if err := l.Consolidate(context.Background()); err != nil {
+				t.Error(err)
+			}
 		}
 	}()
 	wg.Wait()
@@ -180,12 +184,18 @@ func TestObserveDoesNotBlockDuringIdleConsolidate(t *testing.T) {
 	ext := blockExt{entered: make(chan struct{}), release: make(chan struct{})}
 	l := NewLearner(&mergeMem{}, "s", contracts.MemoryScope{}, ext, "", 0)
 
-	go func() { _ = l.Consolidate(context.Background()) }()
+	go func() {
+		if err := l.Consolidate(context.Background()); err != nil {
+			t.Error(err)
+		}
+	}()
 	<-ext.entered
 
 	done := make(chan struct{})
 	go func() {
-		_ = l.Observe(context.Background(), contracts.Prompt{Author: "a", Content: "hi"}, "yo")
+		if err := l.Observe(context.Background(), contracts.Prompt{Author: "a", Content: "hi"}, "yo"); err != nil {
+			t.Error(err)
+		}
 		close(done)
 	}()
 

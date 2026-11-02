@@ -271,7 +271,9 @@ func TestMergeBestEffortOnOriginalRecordError(t *testing.T) {
 		Merged: []string{"facts/a", "facts/b"},
 	}}}
 	l := learnerWith(mem, f, 2, 40, "stale")
-	_ = l.Merge(context.Background())
+	if err := l.Merge(context.Background()); err == nil {
+		t.Error("Merge did not report the failed original record")
+	}
 	var sawUmbrella, sawB bool
 	for _, r := range mem.records {
 		if r.Key == "facts/u" {
@@ -401,7 +403,9 @@ func TestMergeTransitionSkippedOnOriginalRecordError(t *testing.T) {
 		Merged: []string{"facts/a", "facts/b"},
 	}}}
 	l := learnerWith(mem, f, 2, 40, "stale")
-	_ = l.Merge(context.Background())
+	if err := l.Merge(context.Background()); err == nil {
+		t.Error("Merge did not report the failed original record")
+	}
 	for _, tr := range l.transitions {
 		if tr.Key == "facts/a" {
 			t.Fatalf("facts/a must not produce a transition: its archive Record failed")

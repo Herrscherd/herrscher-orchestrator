@@ -8,6 +8,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,7 @@ type Transition struct {
 type Curator struct {
 	mem     contracts.Memory
 	session string
+	log     *slog.Logger
 	scopeMu sync.RWMutex
 	scope   contracts.MemoryScope
 	pending []contracts.Node
@@ -65,10 +67,22 @@ func NewScoped(mem contracts.Memory, session string, scope contracts.MemoryScope
 	return &Curator{
 		mem:          mem,
 		session:      "sessions/" + session,
+		log:          slog.New(slog.DiscardHandler),
 		scope:        scope,
 		now:          time.Now,
 		staleAfter:   30 * 24 * time.Hour,
 		archiveAfter: 90 * 24 * time.Hour,
+	}
+}
+
+// SetLogger routes the warnings of best-effort memory writes to log.
+func (c *Curator) SetLogger(log *slog.Logger) {
+	c.log = log
+}
+
+func (c *Curator) logFailure(msg string, err error) {
+	if err != nil {
+		c.log.Warn(msg, "error", err)
 	}
 }
 

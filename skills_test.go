@@ -326,7 +326,10 @@ func TestLearnedSkillsSkipsInactive(t *testing.T) {
 		Nodes: []contracts.Node{stale, archived, implicit},
 	}
 
-	got, _ := skillCurator(m).LearnedSkills(context.Background())
+	got, err := skillCurator(m).LearnedSkills(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(got) != 1 || got[0].Key != "agents/a/skills/implicit" {
 		t.Fatalf("got %v, want only the implicitly-active node (an absent state means active)", got)
