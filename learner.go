@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
+	"io/fs"
 	"os"
 	"strings"
 	"sync"
@@ -54,7 +54,7 @@ var errEnqueue = errors.New("orchestrator: candidate over budget, queued for ret
 // Consolidate body (they never interleave), which is also why pending/seen/offset
 // touched only inside that mu-guarded body, need no separate guard. The
 // activity clock (lastActivity/lastRun/n), read/written off the consolidation
-// body, is guarded by the lighter stampMu instead (see the field comments).
+// body, is guarded by the lighter stampMu instead.
 type Learner struct {
 	*Curator
 
@@ -68,7 +68,7 @@ type Learner struct {
 
 	mergeMin    int
 	mergeMax    int
-	mergeTarget string
+	mergeTarget mergeTarget
 
 	promoteMinAge time.Duration
 
@@ -98,7 +98,7 @@ const defaultIdlePoll = 10 * time.Minute
 // NewLearner builds a learning orchestrator. With a nil extractor it behaves
 // exactly like the default Curator (Consolidate is a no-op).
 func NewLearner(mem contracts.Memory, session string, scope contracts.MemoryScope, ex Extractor, journal string, every int) *Learner {
-	return &Learner{Curator: NewScoped(mem, session, scope), extract: ex, journal: journal, every: every, seen: make(map[string]bool), idlePoll: defaultIdlePoll}
+	return &Learner{Curator: NewScoped(mem, session, scope), extract: ex, journal: journal, every: every, seen: make(map[string]bool), idlePoll: defaultIdlePoll, mergeTarget: mergeTargetStale}
 }
 
 // SetIdle configures the G5 inactivity trigger. sinceLastRunDays <= 0 disables
@@ -335,13 +335,13 @@ func (l *Learner) persist(ctx context.Context, candidate Candidate) error {
 	}
 	cons, ok := l.consolidator()
 	if !ok {
-		slog.Warn("memory: candidate over budget and no consolidator; queued for retry",
+		l.log.Warn("memory: candidate over budget and no consolidator; queued for retry",
 			"key", candidate.Node.Key, "runes", budgetErr.Runes, "limit", budgetErr.Limit)
 		return errEnqueue
 	}
 	merged, cerr := cons.Consolidate(ctx, candidate.Node, budgetErr.Limit)
 	if cerr != nil || merged.Key != candidate.Node.Key || merged.Body == "" || utf8.RuneCountInString(merged.Body) > budgetErr.Limit {
-		slog.Warn("memory: consolidation did not bring candidate within budget; queued for retry",
+		l.log.Warn("memory: consolidation did not bring candidate within budget; queued for retry",
 			"key", candidate.Node.Key, "runes", budgetErr.Runes, "limit", budgetErr.Limit, "err", cerr)
 		return errEnqueue
 	}
@@ -351,7 +351,7 @@ func (l *Learner) persist(ctx context.Context, candidate Candidate) error {
 		return nil
 	}
 	if errors.As(rerr, &budgetErr) {
-		slog.Warn("memory: consolidated candidate still over budget; queued for retry",
+		l.log.Warn("memory: consolidated candidate still over budget; queued for retry",
 			"key", candidate.Node.Key, "runes", budgetErr.Runes, "limit", budgetErr.Limit)
 		return errEnqueue
 	}
@@ -393,6 +393,9 @@ func (l *Learner) readJournalTail() string {
 	}
 	journalFile, err := os.Open(l.journal)
 	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			l.logFailure("memory: open journal failed", err)
+		}
 		return ""
 	}
 	defer func() { l.logFailure("memory: close journal failed", journalFile.Close()) }()
@@ -401,11 +404,13 @@ func (l *Learner) readJournalTail() string {
 	}
 	if l.offset > 0 {
 		if _, seekErr := journalFile.Seek(l.offset, io.SeekStart); seekErr != nil {
+			l.logFailure("memory: seek journal failed", seekErr)
 			return ""
 		}
 	}
 	data, err := io.ReadAll(journalFile)
 	if err != nil {
+		l.logFailure("memory: read journal failed", err)
 		return ""
 	}
 	l.offset += int64(len(data))

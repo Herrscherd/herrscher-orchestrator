@@ -49,11 +49,11 @@ type SettingError struct {
 	Err   error
 }
 
-func (e SettingError) Error() string {
+func (e *SettingError) Error() string {
 	return fmt.Sprintf("setting %s: %q is not an integer: %v", e.Key, e.Value, e.Err)
 }
 
-func (e SettingError) Unwrap() error {
+func (e *SettingError) Unwrap() error {
 	return e.Err
 }
 
@@ -62,21 +62,15 @@ func intSetting(cfg contracts.PluginConfig, key string, def int) (int, error) {
 	if raw == "" {
 		return def, nil
 	}
-	days, err := strconv.Atoi(raw)
+	value, err := strconv.Atoi(raw)
 	if err != nil {
-		return 0, SettingError{Key: key, Value: raw, Err: err}
+		return 0, &SettingError{Key: key, Value: raw, Err: err}
 	}
-	return days, nil
+	return value, nil
 }
 
-func staleDuration(raw string, defaultDays int) time.Duration {
-	days := defaultDays
-	if raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil {
-			days = n
-		}
-	}
-	return time.Duration(days) * 24 * time.Hour
+func daysDuration(n int) time.Duration {
+	return time.Duration(n) * 24 * time.Hour
 }
 
 func boolSetting(v string, def bool) bool {
@@ -90,20 +84,41 @@ func boolSetting(v string, def bool) bool {
 	}
 }
 
+type staleness struct {
+	stale   time.Duration
+	archive time.Duration
+}
+
+func stalenessFromConfig(cfg contracts.PluginConfig) (staleness, error) {
+	staleDays, err := intSetting(cfg, "stale-days", defaultStaleDays)
+	if err != nil {
+		return staleness{}, err
+	}
+	archiveDays, err := intSetting(cfg, "archive-days", defaultArchiveDays)
+	if err != nil {
+		return staleness{}, err
+	}
+	return staleness{stale: daysDuration(staleDays), archive: daysDuration(archiveDays)}, nil
+}
+
 func newOrchestrator(_ context.Context, cfg contracts.PluginConfig, mem contracts.Memory) (contracts.Orchestrator, error) {
 	var scope contracts.MemoryScope
-	if p := cfg.Get("memory.project"); p != "" {
-		scope.Project = contracts.ProjectKey(p)
+	if project := cfg.Get("memory.project"); project != "" {
+		scope.Project = contracts.ProjectKey(project)
 	}
-	if a := cfg.Get("memory.agent"); a != "" {
-		scope.Agent = contracts.AgentKey(a)
+	if agent := cfg.Get("memory.agent"); agent != "" {
+		scope.Agent = contracts.AgentKey(agent)
 	}
-	if ex := lookupExtractor(cfg.Get("memory.extractor")); ex != nil {
-		return newLearnerFromConfig(cfg, mem, scope, ex)
+	if extractor := lookupExtractor(cfg.Get("memory.extractor")); extractor != nil {
+		return newLearnerFromConfig(cfg, mem, scope, extractor)
+	}
+	window, err := stalenessFromConfig(cfg)
+	if err != nil {
+		return nil, err
 	}
 	curator := NewScoped(mem, cfg.Get("session"), scope)
 	curator.SetLogger(slog.Default())
-	curator.SetStaleness(staleAfterFromConfig(cfg), archiveAfterFromConfig(cfg))
+	curator.SetStaleness(window.stale, window.archive)
 	curator.SetLearnedSkills(boolSetting(cfg.Get("learned-skills"), false))
 	return curator, nil
 }
@@ -113,9 +128,13 @@ func newLearnerFromConfig(cfg contracts.PluginConfig, mem contracts.Memory, scop
 	if err != nil {
 		return nil, err
 	}
+	window, err := stalenessFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
 	learner := NewLearner(mem, cfg.Get("session"), scope, extractor, cfg.Get("memory.journal"), every)
 	learner.SetLogger(slog.Default())
-	learner.SetStaleness(staleAfterFromConfig(cfg), archiveAfterFromConfig(cfg))
+	learner.SetStaleness(window.stale, window.archive)
 	if err := configureLearner(learner, cfg); err != nil {
 		return nil, err
 	}
@@ -137,28 +156,17 @@ func configureLearner(learner *Learner, cfg contracts.PluginConfig) error {
 	if err != nil {
 		return err
 	}
-	learner.SetPromote(time.Duration(promoteDays) * 24 * time.Hour)
+	learner.SetPromote(daysDuration(promoteDays))
 	idleDays, err := intSetting(cfg, "idle-days", 0)
 	if err != nil {
 		return err
 	}
-	learner.SetIdle(idleDays, idleHoursFromConfig(cfg))
+	idleHours, err := intSetting(cfg, "idle-hours", defaultIdleHours)
+	if err != nil {
+		return err
+	}
+	learner.SetIdle(idleDays, idleHours)
 	learner.SetRawArchive(boolSetting(cfg.Get("raw-archive"), false))
 	learner.SetLearnedSkills(boolSetting(cfg.Get("learned-skills"), false))
 	return nil
-}
-
-func idleHoursFromConfig(cfg contracts.PluginConfig) int {
-	if v, err := strconv.Atoi(cfg.Get("idle-hours")); err == nil {
-		return v
-	}
-	return defaultIdleHours
-}
-
-func staleAfterFromConfig(cfg contracts.PluginConfig) time.Duration {
-	return staleDuration(cfg.Get("stale-days"), defaultStaleDays)
-}
-
-func archiveAfterFromConfig(cfg contracts.PluginConfig) time.Duration {
-	return staleDuration(cfg.Get("archive-days"), defaultArchiveDays)
 }

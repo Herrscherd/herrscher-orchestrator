@@ -63,8 +63,8 @@ func TestIntSettingDefaultsWhenUnsetAndReportsInvalidValues(t *testing.T) {
 
 	bad := contracts.PluginConfig{Settings: map[string]string{"merge-max": "forty"}}
 	_, err := intSetting(bad, "merge-max", 7)
-	var settingErr SettingError
-	if !errors.As(err, &settingErr) || settingErr.Key != "merge-max" || settingErr.Value != "forty" {
+	settingErr, ok := errors.AsType[*SettingError](err)
+	if !ok || settingErr.Key != "merge-max" || settingErr.Value != "forty" {
 		t.Fatalf("invalid setting error = %v, want a SettingError naming merge-max", err)
 	}
 }

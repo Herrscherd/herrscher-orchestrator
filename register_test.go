@@ -2,29 +2,37 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-func TestStaleDuration(t *testing.T) {
-	cases := []struct {
-		in       string
-		def      int
-		wantDays float64
-	}{
-		{"", 30, 30},
-		{"45", 30, 45},
-		{"garbage", 30, 30},
-		{"0", 30, 0},
-		{"-5", 30, -5},
+func TestStalenessFromConfigUsesDefaultsWhenUnsetAndFailsOnGarbage(t *testing.T) {
+	unset := contracts.PluginConfig{}
+	window, err := stalenessFromConfig(unset)
+	if err != nil || window.stale != 30*24*time.Hour || window.archive != 90*24*time.Hour {
+		t.Fatalf("unset staleness = %+v, %v; want the 30 and 90 day defaults", window, err)
 	}
-	for _, c := range cases {
-		got := staleDuration(c.in, c.def)
-		if got != time.Duration(c.wantDays*24)*time.Hour {
-			t.Fatalf("staleDuration(%q,%d) = %v, want %v days", c.in, c.def, got, c.wantDays)
-		}
+
+	garbage := contracts.PluginConfig{Settings: map[string]string{"stale-days": "garbage"}}
+	_, err = stalenessFromConfig(garbage)
+	if settingErr, ok := errors.AsType[*SettingError](err); !ok || settingErr.Key != "stale-days" {
+		t.Fatalf("garbage stale-days error = %v, want a SettingError naming stale-days", err)
+	}
+
+	zero := contracts.PluginConfig{Settings: map[string]string{"archive-days": "0"}}
+	if window, err := stalenessFromConfig(zero); err != nil || window.archive != 0 {
+		t.Fatalf("archive-days=0 = %+v, %v; want a zero archive window (disabled) without error", window, err)
+	}
+}
+
+func TestNewOrchestratorRefusesAnInvalidIdleHours(t *testing.T) {
+	cfg := contracts.PluginConfig{Settings: map[string]string{"idle-days": "7", "idle-hours": "two"}}
+	_, err := newLearnerFromConfig(cfg, newRec(), contracts.MemoryScope{}, plainExt{})
+	if settingErr, ok := errors.AsType[*SettingError](err); !ok || settingErr.Key != "idle-hours" {
+		t.Fatalf("invalid idle-hours error = %v, want a SettingError naming idle-hours", err)
 	}
 }
 
@@ -118,7 +126,7 @@ func TestOrchestratorFactoryWiresStaleness(t *testing.T) {
 	}
 }
 
-func TestBoolSetting(t *testing.T) {
+func TestBoolSettingReadsTruthAndFalsyWordsAndKeepsDefaultOnAnythingElse(t *testing.T) {
 	cases := []struct {
 		in   string
 		def  bool
@@ -158,7 +166,7 @@ func TestBoolSetting(t *testing.T) {
 	}
 }
 
-func TestReportEnabledAndRawArchiveDefaults(t *testing.T) {
+func TestReportAndRawArchiveSettingsKeepTheirOwnDefaultWhenUnusable(t *testing.T) {
 	RegisterExtractor("bool-ex", &fakeExtractor{})
 	cases := []struct {
 		name          string
