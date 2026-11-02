@@ -24,11 +24,9 @@ var (
 
 var _ contracts.TurnReactor = (*Curator)(nil)
 
-// React handles the in-band memory markers the model emits: <remember> stores a
-// durable fact immediately, <recall> searches memory and stashes the hits for the
-// next Context call. Both markers are stripped from the returned reply so the
-// human never sees them. It is best-effort: a memory failure never breaks the
-// turn, and it is a no-op when there is no Memory.
+// React handles the memory markers in a reply: <remember> stores a fact and
+// <recall> queues a search for the next Context. It returns the reply with the
+// markers stripped. It is best-effort: a memory failure never fails the turn.
 func (c *Curator) React(ctx context.Context, reply string) string {
 	if c.mem == nil {
 		return reply

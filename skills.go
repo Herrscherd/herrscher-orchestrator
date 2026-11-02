@@ -15,7 +15,7 @@ import (
 
 const maxSkillNameRunes = 60
 
-// ErrNotSkill is wrapped by ApproveSkill when the node named by key is not a skill.
+// ErrNotSkill is wrapped by ApproveSkill when the node is not a skill.
 var ErrNotSkill = errors.New("not a skill")
 
 var skillMarker = regexp.MustCompile(`(?is)<\s*skill\s+name\s*=\s*"([^"]*)"\s*>(.*?)<\s*/\s*skill\s*>`)
@@ -23,19 +23,12 @@ var skillMarker = regexp.MustCompile(`(?is)<\s*skill\s+name\s*=\s*"([^"]*)"\s*>(
 const skillPreamble = ` Write down a procedure you had to work out, so a later session starts where this one ended, ` +
 	`with <skill name="short-name">the steps</skill>; re-emitting the same name revises it.`
 
-// MetaApproved is a human's answer, set on a KindSkill node, to the only question
-// a self-authored skill raises: may every agent of this project run it. A skill's
-// body comes from the journal, which carries chat messages, repository files and
-// web pages, so a promoted one would turn "what this agent believes" into "what
-// every agent executes". Private is free; shared is approved.
-//
-// Orchestrator-internal, like MetaPromotedTo and MetaMergedInto: obsidian stores
-// Meta generically, so no contracts change is needed.
+// MetaApproved is set on a skill to approve sharing it with the project's
+// agents. Set it through ApproveSkill.
 const MetaApproved = "approved"
 
-// SetLearnedSkills turns the self-authored-skill feature on or off. Off (the
-// default) leaves every surface inert: no marker, no preamble sentence, no
-// normalisation of extractor candidates, and LearnedSkills answers nothing.
+// SetLearnedSkills turns self-authored skills on or off. Off, the default,
+// leaves every skill surface inert.
 func (c *Curator) SetLearnedSkills(on bool) { c.learnedSkills = on }
 
 func (c *Curator) recordSkill(ctx context.Context, rawName, body string) {
@@ -93,21 +86,9 @@ func asLearnedSkill(candidate Candidate, hasPrivateScope bool) Candidate {
 	return candidate
 }
 
-// LearnedSkills answers the active skills this session should have on disk: the
-// agent's private ones and the project's shared ones, in one list.
-//
-// It is an OPTIONAL capability, discovered host-side by type assertion like
-// SetScope and Consolidate before it, so contracts.Orchestrator gains no method
-// and an orchestrator without it degrades to "no learned skills" rather than
-// failing.
-//
-// Two rules are applied here rather than host-side, because they are about
-// scopes and the host does not reason about scopes:
-//
-//   - Only active nodes are returned. A stale or archived skill must leave the
-//     disk, or the staleness machine would be a label with no effect.
-//   - On a name collision the private copy wins: an agent that refined its own
-//     version of a shared procedure meant to use its version.
+// LearnedSkills returns the active skills this session should have on disk: its
+// private skills and the project's shared ones. It is an optional capability,
+// found by type assertion. On a name collision the private copy wins.
 func (c *Curator) LearnedSkills(ctx context.Context) ([]contracts.Node, error) {
 	if c.mem == nil || !c.learnedSkills {
 		return nil, nil
@@ -188,31 +169,8 @@ type skillPartition struct {
 	shared  []contracts.Node
 }
 
-// SkillUsed refreshes lastSeen on each named skill. The host calls it with the
-// names the skills engine saw activated in a reply, which makes this the whole of
-// "improvement through use" in the sense that can actually be measured: nothing
-// here judges whether the skill helped, only that it was reached for.
-//
-// The names are resolved against what LearnedSkills last answered rather than
-// rebuilt from the scope roots, and that is what makes it correct rather than
-// merely cheap. A skill's Key depends on how it was written: the <skill> marker
-// keys under the agent root, while an extractor candidate keeps the flat key it
-// was distilled with and is only *linked* under that root. A derived key finds
-// the first and silently misses the second, so a skill the agent used every day
-// would age out as unused. Resolving through the projection also means a repo or
-// machine-wide skill, which the engine reports by the same name and which no node
-// backs, costs no lookup at all.
-//
-// Two things fall out of that, and they are why this is worth a seam:
-//
-//   - The staleness sweep archives the skill nobody activates and leaves the one
-//     that serves. A useless skill dies on its own, reversibly, with no retention
-//     policy written anywhere.
-//   - promoteEligible already requires lastSeen to have advanced past capturedAt.
-//     A skill written once and never used therefore never becomes promotable, and
-//     the existing eligibility rule reads, unmodified, as "this skill has served".
-//
-// Best-effort and silent: it runs after the reply is already on its way out.
+// SkillUsed notes that the named skills were used. It does nothing unless
+// learned skills are on, and it is best-effort and silent.
 func (c *Curator) SkillUsed(ctx context.Context, names []string) {
 	if c.mem == nil || !c.learnedSkills || len(names) == 0 {
 		return
@@ -242,13 +200,9 @@ func (c *Curator) SkillUsed(ctx context.Context, names []string) {
 	}
 }
 
-// ApproveSkill sets or clears the approval mark on the skill at key. It is a free
-// function over a Memory rather than a Curator method because the host CLI runs
-// it outside any session, exactly like Restore.
-//
-// Revoking does not undo a promotion that already happened: the shared copy is a
-// node of its own, unmade with memory unlink and memory restore. Revoking only
-// stops the next one, which is what a revoke can honestly promise.
+// ApproveSkill sets or clears the approval mark on the skill at key. It works
+// outside a session, like Restore. Revoking does not undo an earlier promotion;
+// it stops the next one.
 func ApproveSkill(ctx context.Context, memory contracts.Memory, key string, approve bool) error {
 	recalled, err := memory.Recall(ctx, key, 0)
 	if err != nil {

@@ -7,9 +7,9 @@ var (
 	extractors   = make(map[string]Extractor)
 )
 
-// RegisterExtractor registers e under name (typically from an init()). A second
-// registration under the same name overwrites the first; last writer wins, as
-// for any plugin registry.
+// RegisterExtractor makes extractor available under name to the orchestrator
+// built from config. A later registration under the same name replaces the
+// earlier one.
 func RegisterExtractor(name string, extractor Extractor) {
 	extractorsMu.Lock()
 	defer extractorsMu.Unlock()

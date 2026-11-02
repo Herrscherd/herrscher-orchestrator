@@ -1,8 +1,5 @@
-// Package orchestrator is the default conversation-policy plugin: it primes each
-// turn with a compact background block recalled from Memory and records the turn
-// afterwards as a bounded rolling transcript on the session node. It is the
-// minimal implementation of contracts.Orchestrator; a richer one (summarisation,
-// multi-agent routing) registers under the same category to replace it.
+// Package orchestrator provides the default Orchestrator. It recalls memory into
+// each turn's context and records the turn on the session node.
 package orchestrator
 
 import (
@@ -26,17 +23,16 @@ const (
 // TransitionKind names the curator pass that made a Transition.
 type TransitionKind string
 
-// Transition kinds: TransitionSweep for G3 staleness, TransitionMerge for G2
-// umbrella folds, and TransitionRestore for an explicit reactivation.
+// TransitionSweep, TransitionMerge and TransitionRestore are the kinds of
+// Transition.
 const (
 	TransitionSweep   TransitionKind = "sweep"
 	TransitionMerge   TransitionKind = "merge"
 	TransitionRestore TransitionKind = "restore"
 )
 
-// Transition is one state change a curator pass made to one node, for the
-// audit report. Kind is TransitionSweep (G3 staleness), TransitionMerge (G2
-// umbrella-fold), or TransitionRestore (an explicit reactivation).
+// Transition is one state change a curator pass made to one node, reported in
+// the audit report. Kind names the pass that made it.
 type Transition struct {
 	Key  string
 	From string
@@ -44,8 +40,8 @@ type Transition struct {
 	Kind TransitionKind
 }
 
-// Curator is the default Orchestrator. With a nil Memory it still answers, just
-// without continuity (Context returns "", Observe no-ops).
+// Curator is the default Orchestrator. With a nil Memory it still answers,
+// without continuity.
 type Curator struct {
 	mem     contracts.Memory
 	session string
@@ -66,14 +62,14 @@ type Curator struct {
 	transitions []Transition
 }
 
-// New builds the default orchestrator for session over mem (mem may be nil),
-// with no memory scope (the session transcript is the only continuity).
+// New returns the default orchestrator for session over mem, with no memory
+// scope.
 func New(mem contracts.Memory, session string) *Curator {
 	return NewScoped(mem, session, contracts.MemoryScope{})
 }
 
-// NewScoped is New plus a MemoryScope (P1): Context also surfaces the shared
-// project memory and this agent's private skills via contracts.RecallScoped.
+// NewScoped is New with a MemoryScope. Context then also recalls the scoped
+// memory.
 func NewScoped(mem contracts.Memory, session string, scope contracts.MemoryScope) *Curator {
 	return &Curator{
 		mem:          mem,
@@ -86,7 +82,7 @@ func NewScoped(mem contracts.Memory, session string, scope contracts.MemoryScope
 	}
 }
 
-// SetLogger routes the warnings of best-effort memory writes to log.
+// SetLogger sets where warnings from best-effort memory writes are logged.
 func (c *Curator) SetLogger(log *slog.Logger) {
 	c.log = log
 }
@@ -97,9 +93,8 @@ func (c *Curator) logFailure(msg string, err error) {
 	}
 }
 
-// SetStaleness configures the age windows used by Sweep. A window <= 0 disables
-// that transition (nodes never reach that state). The host wires this from
-// AGENT_STALE_DAYS / AGENT_ARCHIVE_DAYS in register.go.
+// SetStaleness sets the age windows used by Sweep. A window of zero or less
+// disables that transition.
 func (c *Curator) SetStaleness(staleAfter, archiveAfter time.Duration) {
 	c.staleAfter = staleAfter
 	c.archiveAfter = archiveAfter
@@ -111,9 +106,7 @@ func (c *Curator) scopeOf() contracts.MemoryScope {
 	return c.scope
 }
 
-// SetScope re-roots memory mid-session. The host calls it once, when a session's
-// first prompt settles a project its launch could only guess at; what was already
-// filed stays filed, because a fact recorded under the guess is still true.
+// SetScope re-roots memory. Nodes already filed stay where they were.
 func (c *Curator) SetScope(scope contracts.MemoryScope) {
 	c.scopeMu.Lock()
 	c.scope = scope
@@ -122,9 +115,8 @@ func (c *Curator) SetScope(scope contracts.MemoryScope) {
 
 var _ contracts.Orchestrator = (*Curator)(nil)
 
-// Context recalls the session node and its neighbours into a compact background
-// block to prepend to the next prompt. It returns "" (never a turn-breaking
-// error) when nothing is recalled yet: a first turn or a missing node.
+// Context returns a compact background block to prepend to the next prompt, or
+// the empty string when nothing is recalled yet. It never fails the turn.
 func (c *Curator) Context(ctx context.Context) string {
 	if c.mem == nil {
 		return ""
@@ -160,8 +152,8 @@ func writeNode(builder *strings.Builder, node contracts.Node) {
 	}
 }
 
-// Observe records the turn by upserting the session node with a bounded rolling
-// transcript, so the next Context call has continuity.
+// Observe records the turn on the session node as a bounded rolling transcript,
+// so the next Context has continuity.
 func (c *Curator) Observe(ctx context.Context, prompt contracts.Prompt, reply string) error {
 	if c.mem == nil {
 		return nil
@@ -184,13 +176,11 @@ func (c *Curator) Observe(ctx context.Context, prompt contracts.Prompt, reply st
 	})
 }
 
-// Consolidate satisfies contracts.CurationHook. The default keeps a bounded
-// rolling transcript inline (see Observe), so there is nothing to consolidate; a
-// richer orchestrator overrides this with summarisation/pruning.
+// Consolidate satisfies contracts.CurationHook. The default has nothing to
+// consolidate; richer orchestrators override it.
 func (c *Curator) Consolidate(_ context.Context) error { return nil }
 
-// Close releases resources. The default orchestrator holds none (the Memory it
-// composes is owned and closed by the host).
+// Close releases the Curator's resources.
 func (c *Curator) Close() error { return nil }
 
 func turnLine(author, content, reply string) string {

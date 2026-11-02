@@ -8,21 +8,20 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// MetaPromotedTo names the Key of the shared copy that a private node was
-// promoted to. It is a terminal marker on the ORIGINAL: the original is
-// kept (reversible, still private, still usable by its own agent) but is never
-// re-promoted. Orchestrator-internal; obsidian stores Meta generically, so no
-// contracts change is needed.
+// MetaPromotedTo is set on a private original once its shared copy exists; its
+// value is the Key of that copy. The original stays private and is never
+// promoted again.
 const MetaPromotedTo = "promotedTo"
 
-// MetaPromotedFrom names, on a shared copy, the Key of the private node it
-// was promoted from (the back-pointer counterpart to MetaPromotedTo).
+// MetaPromotedFrom is set on a shared copy; its value is the Key of the private
+// node it was promoted from.
 const MetaPromotedFrom = "promotedFrom"
 
 const metaCapturedAt = "capturedAt"
 
-// SetPromote configures the ★ cross-agent promotion pass. minAge <= 0 disables
-// the pass (default).
+// SetPromote sets the minimum age, from capture to last use, that a private node
+// must reach before it is promoted to the shared project scope. Zero or less
+// disables promotion, the default.
 func (l *Learner) SetPromote(minAge time.Duration) {
 	l.promoteMinAge = minAge
 }
@@ -95,11 +94,9 @@ func (l *Learner) applyPromotion(ctx context.Context, node contracts.Node) error
 	return l.mem.Record(ctx, node)
 }
 
-// Promote copies each eligible private node of this agent's own scope into the
-// shared project scope, so peer agents inherit it via RecallScoped. Best-effort
-// and idempotent: disabled (promoteMinAge<=0), no project/agent scope, or nil
-// Memory all yield a clean no-op; a per-node write failure is recorded as the
-// first error but never aborts the rest of the pass.
+// Promote copies each eligible private node of this agent into the shared
+// project scope, where peer agents see it. It is best-effort: a disabled pass or
+// a missing scope is a no-op, and a failed node does not stop the rest.
 func (l *Learner) Promote(ctx context.Context) error {
 	scope := l.scopeOf()
 	if l.promoteMinAge <= 0 || l.mem == nil || scope.Project == "" || scope.Agent == "" {

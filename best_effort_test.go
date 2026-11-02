@@ -173,3 +173,15 @@ func TestReadJournalTailLogsACloseFailure(t *testing.T) {
 	l.readJournalTail()
 	assertJournalStepLogged(t, logs, "memory: close journal failed")
 }
+
+func TestReadJournalTailReadsWithTheDefaultOpenerWhenNoneIsSet(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "journal.log")
+	if err := os.WriteFile(path, []byte("a journal line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l := &Learner{journal: path}
+	if got := l.readJournalTail(); got != "a journal line\n" {
+		t.Fatalf("readJournalTail = %q, want the file content read through the default opener", got)
+	}
+}

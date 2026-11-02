@@ -9,16 +9,12 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// ReportKind is the orchestrator-local Node.Kind used for a per-pass audit
-// report. No contracts change: NodeKind is a plain string type and nothing in
-// contracts/obsidian switches on Kind to gate behaviour; obsidian only
-// compares it inside Query.Kinds filtering.
+// ReportKind is the Node.Kind of a per-pass audit report.
 const ReportKind contracts.NodeKind = "report"
 
 const defaultReportPrefix = "reports/"
 
-// SetReport configures G4 report emission. enabled=false is a clean no-op;
-// prefix="" falls back to defaultReportPrefix.
+// SetReport enables or disables report nodes. A blank prefix uses the default.
 func (l *Learner) SetReport(enabled bool, prefix string) {
 	l.reportEnabled = enabled
 	if prefix == "" {

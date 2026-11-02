@@ -8,27 +8,20 @@ import (
 
 const defaultMergeMax = 40
 
-// MetaMergedInto names the umbrella Key that subsumed a node, and is set on that node.
-// It is a terminal marker: the node is kept on disk (reversible) but archived
-// and excluded from recall. Orchestrator-internal; obsidian stores Meta
-// generically, so no contracts change is needed.
+// MetaMergedInto is set on a node that an umbrella subsumed; its value is the
+// umbrella's Key. Merge and Promote skip such nodes.
 const MetaMergedInto = "mergedInto"
 
-// Umbrella is one merge proposal from a Merger: a fused node (Node) that
-// subsumes the originals named by Merged (their Keys, >= 2). The plumbing writes
-// Node, then labels, links, and archives each original. The fused node's
-// Key/Title/Body/Meta and the overlap decision are the closed merger's to make;
-// this package only validates and applies.
+// Umbrella is one merge proposal from a Merger: a fused Node and the Keys of the
+// originals it subsumes, listed in Merged.
 type Umbrella struct {
 	Node   contracts.Node
 	Merged []string
 }
 
-// Merger fuses semantically overlapping candidates into umbrella nodes (memory
-// roadmap G2). Given a pre-filtered, single-domain slice of candidates it returns
-// zero or more umbrellas; an empty result means "nothing worth merging". The
-// heuristics are the closed part of the moat; this package defines only the seam
-// and the open plumbing (Learner.Merge) that drives it.
+// Merger fuses overlapping candidates into umbrellas. It receives a pre-filtered
+// slice from one domain and returns zero or more umbrellas; an empty result
+// means there is nothing to merge.
 type Merger interface {
 	Merge(ctx context.Context, cands []contracts.Node) ([]Umbrella, error)
 }
@@ -41,9 +34,8 @@ const (
 	mergeTargetAll
 )
 
-// SetMerge configures the G2 semantic-merge pass. minNodes <= 0 disables it;
-// maxNodes <= 0 falls back to defaultMergeMax; an unrecognised target falls back
-// to "stale".
+// SetMerge configures the merge pass. A minNodes of zero or less disables it; a
+// maxNodes of zero or less uses the default cap.
 func (l *Learner) SetMerge(minNodes, maxNodes int, target string) {
 	l.mergeMin = minNodes
 	if maxNodes <= 0 {
@@ -69,10 +61,10 @@ func (l *Learner) merger() (Merger, bool) {
 	return m, ok
 }
 
-// Merge groups eligible non-archived nodes by Meta["domain"] and folds each
-// group of at least mergeMin nodes into an umbrella via the wired Merger. It is
-// best-effort: disabled (mergeMin<=0), no merger, or nil Memory all yield a clean
-// no-op, and a per-group/per-node error is recorded but never aborts the rest.
+// Merge sends each domain's eligible nodes through the Merger, in groups of at
+// least the configured minimum and capped at the configured maximum. It is best-
+// effort: a disabled pass, a nil Merger or a nil Memory is a no-op, and an error
+// in one domain does not stop the others.
 func (l *Learner) Merge(ctx context.Context) error {
 	if l.mergeMin <= 0 || l.mem == nil {
 		return nil

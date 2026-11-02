@@ -7,16 +7,9 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// Sweep re-derives every node's lifecycle state from its lastSeen timestamp and
-// persists any change. It is deterministic (clock injected via Curator.now) and
-// best-effort: callers on the turn path must not fail a turn if Sweep errors.
-//
-// It enumerates archived nodes too (Query.IncludeArchived) so a re-observed node
-// can transition back out of archived. A node with neither a lastSeen nor a
-// capturedAt stamp has no age basis and is skipped. Unchanged nodes are never
-// rewritten (no churn). When a state change is written, the existing lastSeen is
-// re-supplied so obsidian's per-write lastSeen stamp does not bump the node's age
-// (which would spuriously reactivate it).
+// Sweep re-derives each node's lifecycle state from its last-seen time and
+// persists the changes. It is best-effort: an error on one node does not stop
+// the others.
 func (c *Curator) Sweep(ctx context.Context) error {
 	if c.mem == nil {
 		return nil

@@ -16,46 +16,30 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// Candidate is a memory node the curator proposes to persist, tagged for the
-// shared project scope (a fact every agent of the game should know) or the
-// private agent scope (a learned skill that stays with this agent).
+// Candidate is a memory node proposed for persistence. Private keeps it in the
+// agent's own scope instead of the shared project scope.
 type Candidate struct {
 	Node    contracts.Node
 	Private bool
 }
 
-// Extractor turns the raw record of a stretch of work (the call journal written
-// by `neublox serve` plus the session transcript) into memory candidates. The
-// heuristics/prompts that decide *what is worth remembering* (e.g. the Roblox
-// curation strategy) are the **closed part of the moat**; this package defines
-// only the seam and the open plumbing (Learner) that persists what it returns.
+// Extractor turns the call journal and the session transcript of a stretch of
+// work into memory candidates. Implementations decide what is worth remembering.
 type Extractor interface {
 	Extract(ctx context.Context, journal, transcript string) ([]Candidate, error)
 }
 
-// Consolidator shrinks an over-budget memory candidate so a refused Record can be
-// retried instead of dropped (memory roadmap G1). The merge/summarise heuristics
-// are the closed part of the moat; this package defines only the seam and the
-// open plumbing (Learner) that drives it. The returned node's Body SHOULD fit the
-// given rune limit; the Learner re-checks and, if it still does not, holds the
-// candidate for a later pass.
+// Consolidator shrinks an over-budget candidate so a refused Record can be
+// retried. The returned Body should fit the limit in runes.
 type Consolidator interface {
 	Consolidate(ctx context.Context, over contracts.Node, limit int) (contracts.Node, error)
 }
 
 var errEnqueue = errors.New("orchestrator: candidate over budget, queued for retry")
 
-// Learner is the richer Orchestrator that adds the learning loop on top of the
-// default Curator: it keeps the same per-turn Context/Observe behaviour and
-// implements a real Consolidate that runs an Extractor over the journal +
-// transcript and persists facts (shared) and skills (private) via the P1 scope.
-//
-// The G5 idle loop adds a second Consolidate trigger on its own goroutine, so a
-// turn-path Consolidate and an idle one can now race. mu serialises the whole
-// Consolidate body (they never interleave), which is also why pending/seen/offset
-// touched only inside that mu-guarded body, need no separate guard. The
-// activity clock (lastActivity/lastRun/n), read/written off the consolidation
-// body, is guarded by the lighter stampMu instead.
+// Learner is an Orchestrator that learns. Consolidate runs the Extractor over
+// the journal and transcript and persists facts under the shared project scope
+// and skills under the agent scope. Consolidation passes never interleave.
 type Learner struct {
 	*Curator
 
@@ -98,34 +82,30 @@ var _ contracts.Orchestrator = (*Learner)(nil)
 
 const defaultIdlePoll = 10 * time.Minute
 
-// NewLearner builds a learning orchestrator. With a nil extractor it behaves
-// exactly like the default Curator (Consolidate is a no-op).
+// NewLearner returns a Learner over mem. A nil extractor makes Consolidate a no-
+// op.
 func NewLearner(mem contracts.Memory, session string, scope contracts.MemoryScope, ex Extractor, journal string, every int) *Learner {
 	return &Learner{Curator: NewScoped(mem, session, scope), extract: ex, journal: journal, every: every, seen: make(map[string]bool), idlePoll: defaultIdlePoll, mergeTarget: mergeTargetStale, openJournal: openJournalFile}
 }
 
-// SetIdle configures the G5 inactivity trigger. sinceLastRunDays <= 0 disables
-// it (opt-in, default off); idleHours is the quiet-period threshold measured
-// against lastActivity. Mirrors SetStaleness/SetMerge's setter shape.
+// SetIdle enables the inactivity trigger when sinceLastRunDays is positive.
+// Consolidate then runs in the background once that many days have passed since
+// the last run and idleHours have passed without a turn. A non-positive
+// sinceLastRunDays disables it.
 func (l *Learner) SetIdle(sinceLastRunDays, idleHours int) {
 	l.idleDays = sinceLastRunDays
 	l.idleHours = idleHours
 }
 
-// SetRawArchive toggles the G7 raw-session archival tier. When true, Observe
-// records one untruncated KindTranscript node per turn (best-effort, never
-// blocking the turn). Off by default. The host wires this from MEMORY_RAW_ARCHIVE.
+// SetRawArchive turns the raw transcript archive on or off. When on, each
+// observed turn is stored untruncated, best-effort. It is off by default.
 func (l *Learner) SetRawArchive(on bool) {
 	l.rawArchive = on
 }
 
-// DueForIdleRun reports whether an inactivity-triggered Consolidate should fire,
-// given the current time and the timestamp of the last observed activity. It is
-// pure: it reads now as an explicit parameter (not l.now()), so it is unit-
-// testable with fixed times and needs no real timers. The rule is
-// (now-lastRun >= idleDays) AND (now-lastActivity >= idleHours), both inclusive.
-// It returns false when the trigger is disabled (idleDays <= 0), when lastRun is
-// zero (never consolidated: no baseline yet), or when either threshold is unmet.
+// DueForIdleRun reports whether an idle Consolidate should fire at now, given
+// the time of the last observed activity. It is pure: now is a parameter. It is
+// false when the trigger is disabled or no pass has run yet.
 func (l *Learner) DueForIdleRun(now, lastActivity time.Time) bool {
 	if l.idleDays <= 0 {
 		return false
@@ -142,11 +122,8 @@ func (l *Learner) DueForIdleRun(now, lastActivity time.Time) bool {
 	return true
 }
 
-// Start runs the G5 inactivity poll loop until ctx is cancelled. It is a no-op
-// if the idle trigger is disabled (SetIdle never called or idleDays <= 0). The
-// host calls this once per bridge process, right after constructing the
-// orchestrator; it never blocks a turn. The loop only ever fires Consolidate
-// from its own goroutine, single-flighted against the turn path via TryLock.
+// Start launches the idle loop until ctx is cancelled. It does nothing when the
+// idle trigger is disabled or the loop is already running.
 func (l *Learner) Start(ctx context.Context) {
 	if l.idleDays <= 0 || l.stopIdle != nil {
 		return
@@ -198,15 +175,9 @@ func (l *Learner) idleTick(ctx context.Context) {
 	l.mu.Unlock()
 }
 
-// Observe records the turn (default behaviour), stamps the last-activity clock
-// (the G5 idle trigger's activity signal), and, every `every` turns, fires a
-// best-effort Consolidate out of band so learning never breaks the turn loop.
-//
-// The stamp and counter advance under stampMu, a lightweight lock, NOT the
-// consolidation mu, so a turn-path Observe never waits on a slow background idle
-// Consolidate holding mu (invariant 2). stampMu is released before the cadence
-// l.Consolidate call (which acquires mu), so the two locks are never held nested
-// here.
+// Observe records the turn and stamps the activity clock. Every `every` turns it
+// also runs Consolidate before returning. The stamp itself never waits on a
+// Consolidate in progress.
 func (l *Learner) Observe(ctx context.Context, prompt contracts.Prompt, reply string) error {
 	err := l.Curator.Observe(ctx, prompt, reply)
 	l.stampMu.Lock()
@@ -249,11 +220,10 @@ func (l *Learner) recordRaw(ctx context.Context, prompt contracts.Prompt, reply,
 	}))
 }
 
-// Consolidate runs the extractor over the journal + transcript and persists each
-// candidate under the right scope. It is best-effort: a missing journal, a nil
-// extractor, or a nil Memory all yield a clean no-op. It is safe to call from
-// any goroutine (turn-path cadence, the G5 idle loop, or a standalone/test
-// call): it serialises every pass under mu so two passes never interleave.
+// Consolidate runs one learning pass: it retries queued candidates, extracts new
+// ones from the journal tail and the transcript, and persists them under the
+// right scope. It is best-effort: a nil extractor or a nil Memory is a no-op,
+// and a missing journal is skipped.
 func (l *Learner) Consolidate(ctx context.Context) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -317,10 +287,8 @@ func (l *Learner) record(ctx context.Context, candidate Candidate) error {
 	return contracts.RecordShared(ctx, l.mem, scope, candidate.Node)
 }
 
-// SetScope re-roots memory, waiting for any consolidation in flight to finish
-// first, so one pass never files half its findings under the old project and the
-// other half under the new one. Lock order is mu → scopeMu, the same direction as
-// mu → stampMu, so the three can never deadlock.
+// SetScope re-roots memory. It waits for a Consolidate in progress to finish, so
+// one pass never files findings under two projects.
 func (l *Learner) SetScope(scope contracts.MemoryScope) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -407,7 +375,11 @@ func (l *Learner) readJournalTail() string {
 	if l.journal == "" {
 		return ""
 	}
-	journalFile, err := l.openJournal(l.journal)
+	open := l.openJournal
+	if open == nil {
+		open = openJournalFile
+	}
+	journalFile, err := open(l.journal)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
 			l.logFailure("memory: open journal failed", err)

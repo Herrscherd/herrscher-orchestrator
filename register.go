@@ -42,7 +42,8 @@ func init() {
 	})
 }
 
-// SettingError reports a plugin setting whose value is not a valid integer.
+// SettingError reports a plugin setting whose value is not a valid integer. It
+// unwraps to the parse error.
 type SettingError struct {
 	Key   string
 	Value string

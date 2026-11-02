@@ -9,11 +9,8 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// ErrMergedOriginal is returned by Restore when key names a node folded into an
-// umbrella (Meta[MetaMergedInto] != "") and the caller did not pass Force(true).
-// Restoring a merged fragment without detaching it would resurrect a fragment
-// the merge pass deliberately subsumed, while Sweep's mergedInto guard would
-// immediately re-skip it and a later Merge pass could re-fold it right back.
+// ErrMergedOriginal is returned by Restore for a node folded into an umbrella,
+// unless Force(true) is passed.
 var ErrMergedOriginal = errors.New("orchestrator: node is folded into an umbrella; restore with Force to detach it")
 
 type restoreConfig struct {
@@ -24,10 +21,8 @@ type restoreConfig struct {
 // RestoreOption configures one Restore call.
 type RestoreOption func(*restoreConfig)
 
-// Force returns a RestoreOption that, when on, allows restoring a merged-into original by also clearing
-// Meta[MetaMergedInto] so the node becomes independent again. The umbrella
-// node itself is untouched. It may now have one fewer live member, which is
-// fine; umbrellas are additive, not authoritative.
+// Force returns a RestoreOption that allows restoring a merged original by
+// detaching it from its umbrella.
 func Force(force bool) RestoreOption {
 	return func(c *restoreConfig) { c.force = force }
 }
@@ -36,31 +31,10 @@ func withClock(clock func() time.Time) RestoreOption {
 	return func(c *restoreConfig) { c.clock = clock }
 }
 
-// Restore reactivates an archived (or merged-into) node at key: it clears
-// Meta[MetaState] to active and refreshes Meta[MetaLastSeen] to now, so the
-// very next Sweep does not immediately re-derive it back to stale/archived
-// from a stale timestamp. Idempotent: restoring an already-active node is a
-// no-op write that still refreshes lastSeen.
-//
-// A node still carrying Meta[MetaMergedInto] is a folded fragment, not an
-// independent archived node. Restoring it without also detaching it from its
-// umbrella would resurrect a fragment the merge pass deliberately subsumed.
-// Restore therefore REFUSES a merged original by default: it returns
-// ErrMergedOriginal unless the caller passes Force(true), in which case it
-// also clears Meta[MetaMergedInto].
-//
-// This is a free function taking contracts.Memory, not a *Curator/*Learner
-// method: it needs no orchestrator state beyond the injected clock, and the
-// host's `memory restore` CLI verb builds a bare contracts.Memory with no
-// session/scope, the same shape as the existing memory forget/record verbs.
-//
-// An error from Recall, including "not found", surfaces unchanged; restoring
-// an absent key is a real error (nothing to reactivate), unlike Deleter.Delete's
-// intentional idempotent-on-absent contract.
-//
-// It returns the node's state immediately before the restore (its prior
-// Meta[MetaState], or StateActive when unset), so callers can record a faithful
-// audit "from" value; the returned prior is meaningful only when err is nil.
+// Restore reactivates the node at key: it sets the state to active and refreshes
+// its last-seen time, so the next Sweep does not age it out again. It returns
+// the state the node had before. It refuses a merged original unless Force(true)
+// is passed.
 func Restore(ctx context.Context, mem contracts.Memory, key string, opts ...RestoreOption) (string, error) {
 	cfg := restoreConfig{clock: time.Now}
 	for _, o := range opts {
@@ -99,12 +73,9 @@ func Restore(ctx context.Context, mem contracts.Memory, key string, opts ...Rest
 	return prior, nil
 }
 
-// Restore reactivates key over l's Memory and, on success, appends a
-// Transition{Kind:TransitionRestore} to the pass's audit trail, surfaced in the next
-// report if Consolidate runs before the field resets, or inspectable directly
-// via l.transitions since Restore is typically called out of band between
-// passes. The transition's From is the node's real prior state, not an
-// assumed "archived".
+// Restore reactivates key like the package-level Restore and records a
+// TransitionRestore for the next report, with the node's real prior state as
+// From.
 func (l *Learner) Restore(ctx context.Context, key string, opts ...RestoreOption) error {
 	prior, err := Restore(ctx, l.mem, key, opts...)
 	if err == nil {
