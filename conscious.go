@@ -24,9 +24,11 @@ var (
 
 var _ contracts.TurnReactor = (*Curator)(nil)
 
-// React handles the memory markers in a reply: <remember> stores a fact and
-// <recall> queues a search for the next Context. It returns the reply with the
-// markers stripped. It is best-effort: a memory failure never fails the turn.
+// React handles the memory markers in a reply. <remember> stores a fact. <recall>
+// runs its search at once and queues the hits for the next Context. <skill> is
+// recorded and stripped only when learned skills are on; otherwise it stays in
+// the reply. It returns the reply with the other markers stripped. It is
+// best-effort: a memory failure never fails the turn.
 func (c *Curator) React(ctx context.Context, reply string) string {
 	if c.mem == nil {
 		return reply

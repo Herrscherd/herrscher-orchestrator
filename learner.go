@@ -82,8 +82,8 @@ var _ contracts.Orchestrator = (*Learner)(nil)
 
 const defaultIdlePoll = 10 * time.Minute
 
-// NewLearner returns a Learner over mem. A nil extractor makes Consolidate a no-
-// op.
+// NewLearner returns a Learner over mem. With a nil extractor, Consolidate
+// returns before filing anything; see Consolidate.
 func NewLearner(mem contracts.Memory, session string, scope contracts.MemoryScope, ex Extractor, journal string, every int) *Learner {
 	return &Learner{Curator: NewScoped(mem, session, scope), extract: ex, journal: journal, every: every, seen: make(map[string]bool), idlePoll: defaultIdlePoll, mergeTarget: mergeTargetStale, openJournal: openJournalFile}
 }
@@ -222,8 +222,9 @@ func (l *Learner) recordRaw(ctx context.Context, prompt contracts.Prompt, reply,
 
 // Consolidate runs one learning pass: it retries queued candidates, extracts new
 // ones from the journal tail and the transcript, and persists them under the
-// right scope. It is best-effort: a nil extractor or a nil Memory is a no-op,
-// and a missing journal is skipped.
+// right scope. A nil extractor or a nil Memory makes the pass return before
+// filing anything, but it still records the pass time and discards the
+// transitions recorded so far. A missing journal is skipped.
 func (l *Learner) Consolidate(ctx context.Context) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()

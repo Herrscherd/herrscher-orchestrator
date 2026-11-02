@@ -199,3 +199,18 @@ func TestObserveTriggersConsolidateEveryN(t *testing.T) {
 		t.Fatalf("should consolidate on the 2nd turn, calls=%d", ex.calls)
 	}
 }
+
+func TestNilExtractorConsolidateStampsThePassAndFilesNothing(t *testing.T) {
+	t.Parallel()
+	mem := newRec()
+	l := NewLearner(mem, "alpha", contracts.MemoryScope{Project: "p"}, nil, "", 0)
+	if err := l.Consolidate(context.Background()); err != nil {
+		t.Fatalf("Consolidate: %v", err)
+	}
+	if l.lastRun.IsZero() {
+		t.Fatal("a pass with no extractor must still stamp lastRun")
+	}
+	if len(mem.nodes) != 0 {
+		t.Fatalf("a pass with no extractor filed %d nodes, want none", len(mem.nodes))
+	}
+}

@@ -62,9 +62,9 @@ func (l *Learner) merger() (Merger, bool) {
 }
 
 // Merge sends each domain's eligible nodes through the Merger, in groups of at
-// least the configured minimum and capped at the configured maximum. It is best-
-// effort: a disabled pass, a nil Merger or a nil Memory is a no-op, and an error
-// in one domain does not stop the others.
+// least the configured minimum and capped at the configured maximum. It is
+// best-effort: a disabled pass, a nil Merger or a nil Memory is a no-op, and an
+// error in one domain does not stop the others.
 func (l *Learner) Merge(ctx context.Context) error {
 	if l.mergeMin <= 0 || l.mem == nil {
 		return nil
