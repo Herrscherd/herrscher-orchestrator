@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
@@ -64,7 +65,7 @@ func (c *Curator) recall(ctx context.Context, query string) {
 
 func (c *Curator) search(ctx context.Context, query string) ([]contracts.Node, error) {
 	if scope := c.scopeOf(); scope.Project != "" {
-		return contracts.RecallRelevant(ctx, c.mem, scope, query, recallK)
+		return contracts.RecallRelevant(ctx, c.mem, scope, query, recallK, time.Now().UTC())
 	}
 	return c.mem.Search(ctx, contracts.Query{Text: query, Ranked: true, Limit: recallK})
 }
