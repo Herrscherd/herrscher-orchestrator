@@ -58,6 +58,14 @@ func (e *SettingError) Unwrap() error {
 	return e.Err
 }
 
+// Notice returns the setting.invalid notice naming the setting and its value.
+func (e *SettingError) Notice() contracts.Notice {
+	return contracts.Notice{
+		Code: contracts.CodeSettingInvalid,
+		Args: []contracts.Arg{contracts.Text("Setting", e.Key), contracts.Text("Value", e.Value)},
+	}
+}
+
 func intSetting(cfg contracts.PluginConfig, key string, def int) (int, error) {
 	raw := cfg.Get(key)
 	if raw == "" {

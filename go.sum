@@ -1,7 +1,7 @@
 github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
-github.com/Herrscherd/herrscher-contracts v0.18.0 h1:3fDQnkiY3h0dhhY3I2/xGjp9N1oZ8+Mp+5ykAoYDc0g=
-github.com/Herrscherd/herrscher-contracts v0.18.0/go.mod h1:MEoJye4dvm9yueLhb/9MrLQcBdXVm05ycSagXkjDaGw=
+github.com/Herrscherd/herrscher-contracts v0.19.1 h1:65LaapYAwsGx7ikRXorhshLpvoDWHSVU0eWOwx5xQX0=
+github.com/Herrscherd/herrscher-contracts v0.19.1/go.mod h1:MEoJye4dvm9yueLhb/9MrLQcBdXVm05ycSagXkjDaGw=
 github.com/nicksnyder/go-i18n/v2 v2.7.0 h1:oiVQUmuCeNggvm/fUVb6/R0aP82BDVphZnmVHwut+J0=
 github.com/nicksnyder/go-i18n/v2 v2.7.0/go.mod h1:ZMYiWg8ndQSGNk4zbzbyJjrrVjQjuQ8pERFrnBik+c8=
 go.yaml.in/yaml/v3 v3.0.5 h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=

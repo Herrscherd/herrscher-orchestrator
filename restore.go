@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -11,7 +10,17 @@ import (
 
 // ErrMergedOriginal is returned by Restore for a node folded into an umbrella,
 // unless Force(true) is passed.
-var ErrMergedOriginal = errors.New("orchestrator: node is folded into an umbrella; restore with Force to detach it")
+var ErrMergedOriginal error = mergedOriginalError{}
+
+type mergedOriginalError struct{}
+
+func (mergedOriginalError) Error() string {
+	return "orchestrator: node is folded into an umbrella; restore with Force to detach it"
+}
+
+func (mergedOriginalError) Notice() contracts.Notice {
+	return contracts.Notice{Code: contracts.CodeNodeMerged}
+}
 
 type restoreConfig struct {
 	force bool

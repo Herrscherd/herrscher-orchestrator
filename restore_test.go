@@ -167,3 +167,17 @@ func TestLearnerRestoreRecordsRealPriorState(t *testing.T) {
 		t.Errorf("From = %q, want stale", l.transitions[0].From)
 	}
 }
+
+func TestRestoreMergedOriginalIsANodeMergedNotice(t *testing.T) {
+	m := newRestoreMem()
+	m.nodes["facts/a"] = contracts.Node{Key: "facts/a", Meta: map[string]string{MetaMergedInto: "facts/u"}}
+	_, err := Restore(context.Background(), m, "facts/a")
+	wrapped := fmt.Errorf("restore: %w", err)
+	if !errors.Is(wrapped, ErrMergedOriginal) {
+		t.Fatalf("wrapped err = %v, want ErrMergedOriginal in its chain", wrapped)
+	}
+	notice := contracts.NoticeOf(wrapped)
+	if notice.Code != contracts.CodeNodeMerged || len(notice.Args) != 0 {
+		t.Fatalf("notice = %+v, want CodeNodeMerged without arguments", notice)
+	}
+}
