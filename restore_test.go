@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
+	"github.com/Herrscherd/herrscher-contracts/i18n"
 )
 
 type restoreMem struct {
@@ -176,8 +178,14 @@ func TestRestoreMergedOriginalIsANodeMergedNotice(t *testing.T) {
 	if !errors.Is(wrapped, ErrMergedOriginal) {
 		t.Fatalf("wrapped err = %v, want ErrMergedOriginal in its chain", wrapped)
 	}
+	if !strings.Contains(err.Error(), "restore with Force") {
+		t.Fatalf("err = %q, want the English text naming Force", err.Error())
+	}
 	notice := contracts.NoticeOf(wrapped)
 	if notice.Code != contracts.CodeNodeMerged || len(notice.Args) != 0 {
 		t.Fatalf("notice = %+v, want CodeNodeMerged without arguments", notice)
+	}
+	if _, renderErr := contracts.NewRenderer().Render(i18n.English, notice); renderErr != nil {
+		t.Fatalf("Render(English) error = %v", renderErr)
 	}
 }

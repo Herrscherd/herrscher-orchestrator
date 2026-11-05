@@ -10,6 +10,7 @@ import (
 	"time"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
+	"github.com/Herrscherd/herrscher-contracts/i18n"
 )
 
 func TestStalenessFromConfigUsesDefaultsWhenUnsetAndFailsOnGarbage(t *testing.T) {
@@ -268,5 +269,8 @@ func TestSettingErrorIsASettingInvalidNotice(t *testing.T) {
 	}
 	if value.Name() != "Value" || value.Kind() != contracts.ArgText || value.Value() != "garbage" {
 		t.Fatalf("Value argument = %q %v %v, want text garbage", value.Name(), value.Kind(), value.Value())
+	}
+	if _, renderErr := contracts.NewRenderer().Render(i18n.English, notice); renderErr != nil {
+		t.Fatalf("Render(English) error = %v", renderErr)
 	}
 }
