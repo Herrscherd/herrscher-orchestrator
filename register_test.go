@@ -10,6 +10,7 @@ import (
 	"time"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
+	"github.com/Herrscherd/herrscher-contracts/i18n"
 )
 
 func TestStalenessFromConfigUsesDefaultsWhenUnsetAndFailsOnGarbage(t *testing.T) {
@@ -252,5 +253,24 @@ func TestRegisterWiresTheProcessLoggerIntoEachOrchestrator(t *testing.T) {
 	curator.remember(ctx, "use gofmt")
 	if !strings.Contains(logs.String(), "memory: remember failed") {
 		t.Fatalf("the curator did not log through the process logger: %q", logs.String())
+	}
+}
+
+func TestSettingErrorIsASettingInvalidNotice(t *testing.T) {
+	garbage := contracts.PluginConfig{Settings: map[string]string{"stale-days": "garbage"}}
+	_, err := stalenessFromConfig(garbage)
+	notice := contracts.NoticeOf(err)
+	if notice.Code != contracts.CodeSettingInvalid || len(notice.Args) != 2 {
+		t.Fatalf("notice = %+v, want CodeSettingInvalid with Setting and Value", notice)
+	}
+	setting, value := notice.Args[0], notice.Args[1]
+	if setting.Name() != "Setting" || setting.Kind() != contracts.ArgText || setting.Value() != "stale-days" {
+		t.Fatalf("Setting argument = %q %v %v, want text stale-days", setting.Name(), setting.Kind(), setting.Value())
+	}
+	if value.Name() != "Value" || value.Kind() != contracts.ArgText || value.Value() != "garbage" {
+		t.Fatalf("Value argument = %q %v %v, want text garbage", value.Name(), value.Kind(), value.Value())
+	}
+	if _, renderErr := contracts.NewRenderer().Render(i18n.English, notice); renderErr != nil {
+		t.Fatalf("Render(English) error = %v", renderErr)
 	}
 }

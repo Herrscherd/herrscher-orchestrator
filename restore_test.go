@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
+	"github.com/Herrscherd/herrscher-contracts/i18n"
 )
 
 type restoreMem struct {
@@ -165,5 +167,25 @@ func TestLearnerRestoreRecordsRealPriorState(t *testing.T) {
 	}
 	if l.transitions[0].From != contracts.StateStale {
 		t.Errorf("From = %q, want stale", l.transitions[0].From)
+	}
+}
+
+func TestRestoreMergedOriginalIsANodeMergedNotice(t *testing.T) {
+	m := newRestoreMem()
+	m.nodes["facts/a"] = contracts.Node{Key: "facts/a", Meta: map[string]string{MetaMergedInto: "facts/u"}}
+	_, err := Restore(context.Background(), m, "facts/a")
+	wrapped := fmt.Errorf("restore: %w", err)
+	if !errors.Is(wrapped, ErrMergedOriginal) {
+		t.Fatalf("wrapped err = %v, want ErrMergedOriginal in its chain", wrapped)
+	}
+	if !strings.Contains(err.Error(), "restore with Force") {
+		t.Fatalf("err = %q, want the English text naming Force", err.Error())
+	}
+	notice := contracts.NoticeOf(wrapped)
+	if notice.Code != contracts.CodeNodeMerged || len(notice.Args) != 0 {
+		t.Fatalf("notice = %+v, want CodeNodeMerged without arguments", notice)
+	}
+	if _, renderErr := contracts.NewRenderer().Render(i18n.English, notice); renderErr != nil {
+		t.Fatalf("Render(English) error = %v", renderErr)
 	}
 }
